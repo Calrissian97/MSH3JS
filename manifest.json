@@ -1,0 +1,50 @@
+{
+  "name": "Star Wars Battlefront .msh Three.js model viewer",
+  "short_name": "MSH3js",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "lang": "en",
+  "background_color": "rgba(0,0,0,0.0)",
+  "theme_color": "rebeccapurple",
+  "description": "PWA MSH viewer via Three.js for models from the original Star Wars Battlefront games by yours truly, Calrissian97.",
+  "icons": [
+    {
+      "src": "android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "application/octet-stream": [
+          ".msh"
+        ]
+      }
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "label": "Star Wars Battlefront .msh Three.js model viewer (Max 8 screenshots)"
+    }
+  ]
+}

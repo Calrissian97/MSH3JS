@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>MSH3JS MSH file viewer</title>
+
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- PWA metadata, icon -->
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="favicon.ico" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+  <link href="./fonts/Aurebesh.ttf" as="font" type="font/ttf" crossorigin="anonymous">
+
+  <!-- Not much styling, just use inline -->
+  <style>
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgb(0, 0, 0);
+      scrollbar-width: none;
+    }
+
+    canvas {
+      display: block;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      scrollbar-width: none;
+      position: absolute;
+      padding: 0;
+      margin: 0;
+    }
+
+    @font-face {
+      font-family: "Aurebesh";
+      src: url("./fonts/Aurebesh.ttf") format("truetype");
+      font-weight: normal;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    :root {
+      --tp-font-family: "Orbitron", "Roboto", "Aurebesh";
+      --tp-base-background-color: hsla(0, 0%, 0%, 0.80);
+      --tp-base-shadow-color: hsla(0, 0%, 0%, 0.2);
+      --tp-button-background-color: hsla(0, 0%, 70%, 1.0);
+      --tp-button-background-color-active: hsla(0, 0%, 85%, 0.80);
+      --tp-button-background-color-focus: hsla(0, 0%, 80%, 0.80);
+      --tp-button-background-color-hover: hsla(0, 0%, 75%, 0.80);
+      --tp-button-foreground-color: hsla(0, 0%, 0%, 1.00);
+      --tp-container-background-color: hsla(0, 0%, 10%, 0.80);
+      --tp-container-background-color-active: hsla(0, 0%, 25%, 0.80);
+      --tp-container-background-color-focus: hsla(0, 0%, 20%, 0.80);
+      --tp-container-background-color-hover: hsla(0, 0%, 15%, 0.80);
+      --tp-container-foreground-color: hsla(0, 0%, 80%, 1.00);
+      --tp-groove-foreground-color: hsla(0, 0%, 10%, 1.00);
+      --tp-input-background-color: hsla(0, 0%, 10%, 0.90);
+      --tp-input-background-color-active: hsla(0, 0%, 25%, 0.90);
+      --tp-input-background-color-focus: hsla(0, 0%, 20%, 0.90);
+      --tp-input-background-color-hover: hsla(0, 0%, 15%, 0.90);
+      --tp-input-foreground-color: hsla(0, 0%, 80%, 1.00);
+      --tp-label-foreground-color: hsla(0, 0%, 80%, 1.00);
+      --tp-monitor-background-color: hsla(0, 0%, 8%, 0.90);
+      --tp-monitor-foreground-color: hsla(0, 0%, 80%, 1.00);
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Imports for msh3js -->
+  <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.module.min.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/",
+          "webgl-lint": "https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js",
+          "stats-gl": "https://cdn.jsdelivr.net/npm/stats-gl/dist/main.min.js",
+          "tweakpane": "https://cdn.jsdelivr.net/npm/tweakpane/dist/tweakpane.min.js",
+          "tweakpane-plugin-html-color-picker": "https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.min.js",
+          "ammo": "https://cdn.jsdelivr.net/npm/ammo.js/ammo.min.js",
+          "view-helper": "./ViewHelper.js",
+          "MSHLoader": "./MSHLoader.js",
+          "msh3js": "./msh3js.js"
+        }
+      }
+    </script>
+
+  <!-- Canvas to render .msh file -->
+  <div id="app">
+    <canvas id="msh3jsCanvas" width="64" height="64"></canvas>
+  </div>
+
+  <!-- App entry (ESM) -->
+  <script type="module">
+    // App object/namespace for application state and data
+    import msh3js from "msh3js";
+
+    // When HTML is loaded...
+    document.addEventListener("DOMContentLoaded", async () => {
+      if (msh3js.debug) console.log("HTML loaded");
+      // Get canvas element
+      const canvas = document.getElementById("msh3jsCanvas");
+      // Set app options
+      const options = {};
+      // Start App loop
+      await msh3js.startApp(canvas, options);
+    });
+  </script>
+
+  <!-- Fallback app entry (UMD) -->
+  <script nomodule src="https://cdn.jsdelivr.net/npm/tweakpane@3/dist/tweakpane.min.js"></script> <!-- Use tweakpane v3 for umd builds -->
+  <script nomodule src="https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.umd.min.js"></script>
+  <script nomodule src="https://cdn.jsdelivr.net/npm/ammo.js/ammo.min.js"></script>
+  <script nomodule src="https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js"></script>
+  <script nomodule src="./msh3js.umd.js"></script>
+  <script nomodule>
+    // Fallback to UMD for browsers that don't support ESM
+    document.addEventListener("DOMContentLoaded", async () => {
+      if (window.msh3js) {
+        // Start app
+        if (window.msh3js.debug) console.log("HTML loaded (nomodule)");
+        const canvas = document.getElementById("msh3jsCanvas");
+        const options = {};
+        await window.msh3js.startApp(canvas, options);
+      } else {
+        console.error("msh3js is not defined. Your browser may not be supported or the UMD bundle failed to load.");
+        const appContainer = document.getElementById('msh3js') || document.getElementById('app') || document.body;
+        if (appContainer) {
+          // Warn user of unsupported browser and required features
+          appContainer.style.cssText = 'display: flex; align-items: center; justify-content: center; height: 100%;';
+          appContainer.innerHTML = '<p style="color: white; font-family: sans-serif; text-align: center; padding: 2em;">Your browser is not supported.<br>This application requires a browser that supports WebGL and JavaScript.</p>';
+        }
+      }
+    });
+  </script>
+
+  <!-- Fallback for browsers with JavaScript disabled -->
+  <noscript>
+    <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+      <p style="color: white; font-family: sans-serif; text-align: center; padding: 2em;">
+        This application requires JavaScript to be enabled.
+        <br>Please enable JavaScript in your browser settings and refresh the page.
+      </p>
+    </div>
+  </noscript>
+</body>
+</html>
