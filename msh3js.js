@@ -515,7 +515,7 @@ const msh3js = {
       msh3js._modules.TweakpanePluginHtmlColorPicker = TweakpanePluginHtmlColorPicker;
     }
     // Initialize the main Tweakpane instance and register the imported plugins.
-    const pane = new Pane({ title: "Controls", expanded: true}); // Main pane
+    const pane = new Pane({ title: "Controls", expanded: true }); // Main pane
     pane.registerPlugin(TweakpanePluginHtmlColorPicker);
     // Create the main tab layout for organizing controls.
     const tab = pane.addTab({
@@ -956,7 +956,7 @@ const msh3js = {
     return pane;
   },
 
-  // Manages listeners by group (renderTrigger, resize, fileDrop, fileSelectSplashScreen ) and action (add/remove)
+  // Manages listeners by group (renderTrigger, resize, fileDrop) and action (add/remove)
   manageListeners(action, group) {
     if (msh3js.debug) console.log("manageListeners::params::action:", action, "group:", group);
 
@@ -1222,29 +1222,32 @@ const msh3js = {
                     material.three.needsUpdate = true;
                     msh.textures.push(ThreeTexture);
                   }
-                } else if (material.matd != null && material.matd.tx0d != null) {
+                }
+
+                if (material.matd != null) {
+                  // Handle tx0d (diffuse map)
                   if (material.matd.tx0d.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     material.three.map = ThreeTexture;
                     material.three.wireframe = false;
-                    /*material.three.onBeforeCompile = (shader) => {
-                      // Use alpha channel of diffuse color map as alphaMap and specularMap
-                      shader.defines = { USE_SPECULARMAP: '' }
-                      shader.fragmentShader = shader.fragmentShader.replace(
-                        '#include <specularmap_fragment>',
-                        `// sample alpha for specular strength
-                        float specMask = texture2D( map, vUv ).a;
-                        specularStrength = specMask;
-                        `);
-                      shader.fragmentShader = shader.fragmentShader.replace(
-                        '#include <alphamap_fragment>',
-                        `// sample alpha for transparency
-                        float a = texture2D(map, vUv).a;
-                        diffuseColor.a *= a;
-                        `);
-                    };
-                    */
                     material.three.needsUpdate = true;
                     msh.textures.push(ThreeTexture);
+                  }
+
+                  // Handle tx1d (bump/normal map)
+                  if (material.matd.tx1d && material.matd.tx1d.toLowerCase() === fileObj.file.name.toLowerCase()) {
+                    if (material.matd.atrb && (material.matd.atrb.renderFlags.bumpmap || material.matd.atrb.renderFlags.bumpmapAndGlossmap)) {
+                      if (msh3js.debug) console.log('msh3js::processFiles::Bumpmap/Normalmap texture found for material:', material.name);
+                      // Infer if bumpmap or normalmap by filename
+                      if (fileObj.file.name.toLowerCase().includes("bump")) {
+                        material.three.bumpMap = ThreeTexture;
+                        material.three.bumpScale = 0.1; // Default bump scale
+                      } else if (fileObj.file.name.toLowerCase().includes("normal")) {
+                        material.three.normalMap = ThreeTexture;
+                        material.three.normalScale = new THREE.Vector2(0.33, 0.33);
+                      }
+                      material.three.needsUpdate = true;
+                      msh.textures.push(ThreeTexture);
+                    }
                   }
                 }
               }
