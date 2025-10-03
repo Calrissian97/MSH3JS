@@ -228,7 +228,7 @@ const msh3js = {
     if (msh3js.debug)
       console.log("initApp::appSize:", msh3js.size.width, "x", msh3js.size.height);
 
-    /* Register service worker to serve app content
+    // Register service worker to serve app content
     if ("serviceWorker" in navigator) {
       try {
         const registration = await navigator.serviceWorker.register("/sw.js");
@@ -239,7 +239,7 @@ const msh3js = {
       } catch (e) {
         console.error("initApp::Service Worker registration failed:", e);
       }
-    } */
+    } 
     // Get supported graphics features
     await msh3js.getSupportedGraphicsFeatures();
 
@@ -582,10 +582,10 @@ const msh3js = {
 
       // Define the four possible texture slots from the MSH material data.
       const textureSlots = {
-        'TX0D': material.matd.tx0d ?? 'Unassigned',
-        'TX1D': material.matd.tx1d ?? 'Unassigned', // Corrected comma placement
-        'TX2D': material.matd.tx2d ?? 'Unassigned',
-        'TX3D': material.matd.tx3d ?? 'Unassigned',
+        'TX0D': material.texture ?? material.matd.tx0d ?? 'Unassigned',
+        'TX1D': material.texture ? 'Unassigned' : material.matd.tx1d ?? 'Unassigned',
+        'TX2D': material.texture ? 'Unassigned' : material.matd.tx2d ?? 'Unassigned',
+        'TX3D': material.texture ? 'Unassigned' : material.matd.tx3d ?? 'Unassigned',
       };
 
       // Create a sub-folder for this specific material.
@@ -1209,16 +1209,7 @@ const msh3js = {
                   if (material.texture.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     material.three.map = ThreeTexture;
                     material.three.wireframe = false;
-                    /*material.three.onBeforeCompile = (shader) => {
-                      // Use alpha channel of diffuse color map as alphaMap
-                      shader.fragmentShader = shader.fragmentShader.replace(
-                        '#include <alphamap_fragment>',
-                        `// sample alpha for transparency
-                        float a = texture2D(map, vUv).a;
-                        diffuseColor.a *= a;
-                        `);
-                    };
-                    */
+                    if (msh3js.debug) console.log("msh3js::processFiles::Cloth texture found for material:", material);
                     material.three.needsUpdate = true;
                     msh.textures.push(ThreeTexture);
                   }
@@ -1226,7 +1217,7 @@ const msh3js = {
 
                 if (material.matd != null) {
                   // Handle tx0d (diffuse map)
-                  if (material.matd.tx0d.toLowerCase() === fileObj.file.name.toLowerCase()) {
+                  if (material.matd.tx0d && material.matd.tx0d.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     material.three.map = ThreeTexture;
                     material.three.wireframe = false;
                     material.three.needsUpdate = true;
@@ -1252,7 +1243,7 @@ const msh3js = {
                 }
               }
             } catch (error) {
-              console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, error);
+              console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
             }
             required = true;
             fileProcessed = true;
@@ -1273,16 +1264,16 @@ const msh3js = {
     */
 
     // Populate msh3js.ui elements w/msh data
-    for (let material of msh3js.three.msh[msh3js.three.msh.length - 1].materials)
+    for (let material of msh3js.three.msh.at(-1).materials)
       msh3js.ui.materials.push(material);
     // Only actual mesh geometry is displayed
-    msh3js.three.msh[msh3js.three.msh.length - 1].group.traverse((childObj) => {
+    msh3js.three.msh.at(-1).group.traverse((childObj) => {
       if (childObj.isMesh) msh3js.ui.models.push(childObj);
     });
-    msh3js.ui.mshName = msh3js.three.msh[msh3js.three.msh.length - 1].fileName;
-    msh3js.ui.mshSize = msh3js.three.msh[msh3js.three.msh.length - 1].fileSize;
-    msh3js.ui.mshLastModified = new Date(msh3js.three.msh[msh3js.three.msh.length - 1].lastModified).toLocaleString();
-    msh3js.ui.sceneName = msh3js.three.msh[msh3js.three.msh.length - 1].sceneInfo.name;
+    msh3js.ui.mshName = msh3js.three.msh.at(-1).fileName;
+    msh3js.ui.mshSize = msh3js.three.msh.at(-1).fileSize;
+    msh3js.ui.mshLastModified = new Date(msh3js.three.msh.at(-1).lastModified).toLocaleString();
+    msh3js.ui.sceneName = msh3js.three.msh.at(-1).sceneInfo.name;
     // Reset missing textures array
     msh3js.ui.missingTextures = [];
     const missingTextureNames = new Set();
@@ -1298,9 +1289,7 @@ const msh3js = {
 
     // Hide meshes that aren't meant to be visible by default
     for (let model of msh3js.ui.models) {
-      if (model.name.toLowerCase().startsWith("sv_") || model.name.toLowerCase().includes("shadowvolume") || model.name.toLowerCase().includes("collision") ||
-        model.name.toLowerCase().startsWith("p_") || model.name.toLowerCase().includes("_lowrez") || model.name.toLowerCase().includes("_lowres") ||
-        model.name.toLowerCase().startsWith("hp_") || model.name.toLowerCase().includes("_lod2") || model.name.toLowerCase().includes("_lod3")) {
+      if (!model.geometry) {
         model.visible = false;
         if (model.userData.isShadowVolume === true) {
           if (msh3js.options.enableShadows === true) {
@@ -1313,7 +1302,7 @@ const msh3js = {
         if (msh3js.options.enableShadows === true) {
           model.recieveShadow = true;
           // If no shadowvolume, allow casting
-          if (msh3js.three.msh[msh3js.three.msh.length - 1].hasShadowVolume !== true) {
+          if (msh3js.three.msh.at(-1).hasShadowVolume !== true) {
             model.castShadow = true;
           }
         }
@@ -1321,7 +1310,7 @@ const msh3js = {
     }
 
     // Import Ammo.js for cloth sim if desired
-    if (msh3js.three.msh[msh3js.three.msh.length - 1].hasCloth === true) {
+    if (msh3js.three.msh.at(-1).hasCloth === true) {
       if (msh3js.options.clothSim === true) {
         if (!msh3js._modules.Ammo) {
           msh3js._modules.Ammo = await import("ammo");

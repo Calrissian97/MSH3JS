@@ -283,7 +283,7 @@ export class MSHLoader extends THREE.Loader {
                         else
                             model.modl.geom.trianglesCCW.push(...trianglesCCW);
 
-                            const geometry = new THREE.BufferGeometry();
+                        const geometry = new THREE.BufferGeometry();
                         for (const key in attributes) geometry.setAttribute(key, attributes[key]);
                         // Instead of this use both segments then merge after
                         geometry.setIndex(new THREE.Uint16BufferAttribute(trianglesCCW, 1));
@@ -361,11 +361,28 @@ export class MSHLoader extends THREE.Loader {
                         geometry.setAttribute("uv", new THREE.Float32BufferAttribute(cloth.cuv0.uvs, 2));
                     if (cloth.cmsh.trianglesCCW)
                         geometry.setIndex(new THREE.Uint32BufferAttribute(cloth.cmsh.trianglesCCW, 1));
+                    // Override vertexColors to white
+                    if (cloth.cpos.vertices) {
+                        // Create and set vertex colors to white since cloth meshes don't have them
+                        const vertexCount = cloth.cpos.vertices.length / 3;
+                        const colors = new Float32Array(vertexCount * 4);
+                        for (let i = 0; i < vertexCount; i++) {
+                            colors[i * 4] = 1.0;     // R
+                            colors[i * 4 + 1] = 1.0; // G
+                            colors[i * 4 + 2] = 1.0; // B
+                            colors[i * 4 + 3] = 1.0; // A
+                        }
+                        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4));
+                        geometry.computeVertexNormals();
+                    }
 
                     const clothMat = new THREE.MeshPhongMaterial({
                         name: "clothMaterial_" + cloth.name,
                         shininess: 0.0,
+                        transparent: true,
+                        side: THREE.DoubleSide,
                         wireframe: true,
+                        vertexColors: true,
                     });
                     const material = {
                         name: "clothMaterial_" + cloth.name,
@@ -375,7 +392,7 @@ export class MSHLoader extends THREE.Loader {
                     this.materials.push(material);
                     if (this.debug) console.log("parse::Material", material.name, "created for cloth", cloth.name + ".");
 
-                    const mesh = new THREE.Mesh(geometry, this.materials[-1].three);
+                    const mesh = new THREE.Mesh(geometry, this.materials.at(-1).three);
                     mesh.name = model.name + "_cloth_" + cloth.name;
                     mesh.userData.isCloth = true;
                     model.three.add(mesh);
@@ -411,7 +428,13 @@ export class MSHLoader extends THREE.Loader {
                 if (this.debug) console.log("parse::Model", model.name, "added to scene.");
             }
             // Adjust visibility of meshes regardless of lineage
-            if (model.three.isMesh) model.three.visible = model.modl.flgs !== 1;
+            if (model.three.isMesh) {
+                // Visibility determined by flgs
+                model.three.visible = model.modl.flgs !== 1;
+                // Override visibility for bones
+                if (model.three.name.toLowerCase().includes("bone")) model.three.visible = true;
+            }
+            else model.three.visible = true;
             // If model is a cloth, add flag to scene userData
             if (model.three.userData.isCloth) scene.userData.hasCloth = true;
             // If model is a shadowvolume, add flag to scene userData
@@ -904,6 +927,7 @@ export class MSHLoader extends THREE.Loader {
                         geom.segments.push(segm);
                     } else if (chunkHeader === "CLTH") {
                         let clth = {
+                            name: byteOffset,
                             ctex: "",
                             cpos: { vertexCount: 0, vertices: null },
                             cuv0: { uvCount: 0, uvs: null },
@@ -1000,8 +1024,8 @@ export class MSHLoader extends THREE.Loader {
                                 const childSize = this._readUint32LE(buffer, byteOffset);
                                 byteOffset += 4 + childSize;
                             }
-                            geom.cloth.push(clth);
                         }
+                        geom.cloth.push(clth);
                         byteOffset = clothEnd;
                     } else {
                         // Skip unknown chunk
