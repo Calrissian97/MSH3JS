@@ -1196,6 +1196,7 @@ const msh3js = {
           if (msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) {
             // Load tga file with TGALoader
             console.log("msh3js::processFiles::Loading texture:", fileObj.file.name);
+            let mat = null;
             try {
               const ThreeTexture = await msh3js.three.tgaLoader.loadAsync(fileObj.url);
               ThreeTexture.name = fileObj.file.name;
@@ -1204,6 +1205,7 @@ const msh3js = {
               msh.textures.push(ThreeTexture);
               // Assign textures to materials
               for (const material of msh.materials) {
+                mat = material;
                 if (material.texture != undefined) {
                   // Handle generated cloth material
                   if (material.texture.toLowerCase() === fileObj.file.name.toLowerCase()) {
@@ -1218,10 +1220,31 @@ const msh3js = {
                 if (material.matd != null) {
                   // Handle tx0d (diffuse map)
                   if (material.matd.tx0d && material.matd.tx0d.toLowerCase() === fileObj.file.name.toLowerCase()) {
+                    // If the material is specular, extract the alpha channel from the diffuse map to use as a specular map.
+                    if (material.specular) {
+                      const { data, width, height } = ThreeTexture.image;
+                      // Calculate the number of channels in the source texture.
+                      const channels = data.length / (width * height);
+                      const specularData = new Uint8Array(width * height * 4);
+                      for (let i = 0, j = 0; i < data.length; i += channels, j += 4) {
+                        // Use alpha if available (4 channels), otherwise default to white (255).
+                        const alpha = (channels === 4) ? data[i + 3] : 255;
+                        specularData[j] = alpha;     // R
+                        specularData[j + 1] = alpha; // G
+                        specularData[j + 2] = alpha; // B
+                        specularData[j + 3] = alpha; // A
+                      }
+                      
+                      const specularMap = new THREE.DataTexture(specularData, width, height, THREE.RGBAFormat);
+                      specularMap.flipY = true;
+                      specularMap.needsUpdate = true;
+                      material.three.specularMap = specularMap;
+                    }
                     material.three.map = ThreeTexture;
                     material.three.wireframe = false;
                     material.three.needsUpdate = true;
                     msh.textures.push(ThreeTexture);
+                    if (msh3js.debug) console.log('msh3js::processFiles::Created texture from alpha channel for material:', material);
                   }
 
                   // Handle tx1d (bump/normal map)
@@ -1243,7 +1266,7 @@ const msh3js = {
                 }
               }
             } catch (error) {
-              console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
+              console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", mat, error);
             }
             required = true;
             fileProcessed = true;
