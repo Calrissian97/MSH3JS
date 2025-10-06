@@ -121,6 +121,14 @@ export class MSHLoader extends THREE.Loader {
                     // Colors are stored in BGRA format, convert to RGBA
                     specColor = new THREE.Color(material.matd.specularColor[2], material.matd.specularColor[1], material.matd.specularColor[0]);
                 }
+                if (material.matd.atrb.bitFlags.glow || material.matd.atrb.bitFlags.emissive || material.matd.atrb.renderFlags.glow) 
+                    material.glow = true;
+                if (material.matd.atrb.renderFlags.scrolling)
+                    material.scrolling = true;
+                if (material.matd.atrb.renderFlags.pulsate)
+                    material.pulsate = true;
+                if (material.matd.atrb.renderFlags.chrome)
+                    material.chrome = true;
             }
             diffColor = new THREE.Color(material.matd.diffuseColor[2], material.matd.diffuseColor[1], material.matd.diffuseColor[0]);
             const threeMaterial = new THREE.MeshPhongMaterial({
