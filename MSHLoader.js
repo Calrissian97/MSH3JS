@@ -134,9 +134,10 @@ export class MSHLoader extends THREE.Loader {
             const threeMaterial = new THREE.MeshPhongMaterial({
                 name: material.name,
                 color: diffColor,
-                specular: specular ? specColor : "#000000",
+                specular: specular ? specColor : "#ffffff",
                 shininess: specular ? material.matd.shininess : 0,
                 transparent: transparent,
+                side: material.matd.atrb.bitFlags.doubleTransparent ? THREE.DoubleSide : THREE.FrontSide,
                 alphaTest: material.matd.atrb.bitFlags.hardEdgedTransparent ? 0.5 : 0,
                 forceSinglePass: material.matd.atrb.bitFlags.singleTransparent,
                 blending: material.matd.atrb.bitFlags.additiveTransparent ? THREE.AdditiveBlending : THREE.NormalBlending,
@@ -618,6 +619,7 @@ export class MSHLoader extends THREE.Loader {
                 const tx0Length = this._readUint32LE(buffer, byteOffset);
                 byteOffset += 4;
                 tx0d = this._readString(buffer, byteOffset, tx0Length);
+                if (!tx0d.endsWith(".tga")) tx0d += ".tga";
                 this.textures.add(tx0d.toLowerCase());
                 byteOffset += tx0Length;
             }
@@ -626,6 +628,7 @@ export class MSHLoader extends THREE.Loader {
                 const tx1Length = this._readUint32LE(buffer, byteOffset);
                 byteOffset += 4;
                 tx1d = this._readString(buffer, byteOffset, tx1Length);
+                if (!tx1d.endsWith(".tga")) tx1d += ".tga";
                 this.textures.add(tx1d.toLowerCase());
                 byteOffset += tx1Length;
             }
@@ -634,6 +637,7 @@ export class MSHLoader extends THREE.Loader {
                 const tx2Length = this._readUint32LE(buffer, byteOffset);
                 byteOffset += 4;
                 tx2d = this._readString(buffer, byteOffset, tx2Length);
+                if (!tx2d.endsWith(".tga")) tx2d += ".tga";
                 this.textures.add(tx2d.toLowerCase());
                 byteOffset += tx2Length;
             }
@@ -642,6 +646,7 @@ export class MSHLoader extends THREE.Loader {
                 const tx3Length = this._readUint32LE(buffer, byteOffset);
                 byteOffset += 4;
                 tx3d = this._readString(buffer, byteOffset, tx3Length);
+                if (!tx3d.endsWith(".tga")) tx3d += ".tga";
                 this.textures.add(tx3d.toLowerCase());
                 byteOffset += tx3Length;
             }
@@ -959,6 +964,8 @@ export class MSHLoader extends THREE.Loader {
                                 const ctexLength = this._readUint32LE(buffer, byteOffset);
                                 byteOffset += 4;
                                 clth.ctex = this._readString(buffer, byteOffset, ctexLength);
+                                if (!clth.ctex.endsWith(".tga"))
+                                    clth.ctex += ".tga";
                                 this.textures.add(clth.ctex.toLowerCase());
                                 byteOffset += ctexLength;
                             } else if (clthChild === "CPOS") {

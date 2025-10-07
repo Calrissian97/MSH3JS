@@ -1025,6 +1025,28 @@ const msh3js = {
   // Main render function
   async render(time) {
     const elapsedTime = (time - (msh3js.renderTime || time)) / 1000.0;
+
+    // Update scrolling textures
+    if (msh3js.three.msh.length > 0) {
+      for (const msh of msh3js.three.msh) {
+        // Animate materials
+        for (const material of msh.materials) {
+          // Handle scrolling textures
+          if (material.scrolling && material.three.map?.userData.scrollSpeedU) {
+            material.three.map.offset.x += material.three.map.userData.scrollSpeedU * elapsedTime;
+            material.three.map.offset.y += material.three.map.userData.scrollSpeedV * elapsedTime;
+          }
+          // Handle pulsating materials
+          if (material.pulsate && !material.three.userData.alwaysOn && material.three.userData.pulseSpeed) {
+            const { minBrightness, pulseSpeed } = material.three.userData;
+            // Scale the raw pulseSpeed (0-255) down to a reasonable frequency for the sine wave.
+            const pulse = (1 + Math.sin(time / 1000 * (pulseSpeed / 2))) / 2; // Oscillates between 0 and 1
+            const brightness = minBrightness + pulse * (1.0 - minBrightness);
+            material.three.color.setScalar(brightness);
+          }
+        }
+      }
+    }
     msh3js.renderTime = time;
 
     msh3js.three.orbitControls.update();
@@ -1201,6 +1223,8 @@ const msh3js = {
               const ThreeTexture = await msh3js.three.tgaLoader.loadAsync(fileObj.url);
               ThreeTexture.name = fileObj.file.name;
               ThreeTexture.colorSpace = THREE.SRGBColorSpace;
+              ThreeTexture.wrapS = THREE.RepeatWrapping;
+              ThreeTexture.wrapT = THREE.RepeatWrapping;
               ThreeTexture.flipY = true;
               msh.textures.push(ThreeTexture);
               // Assign textures to materials
@@ -1218,68 +1242,71 @@ const msh3js = {
                 if (material.matd != null) {
                   // Handle tx0d (diffuse map)
                   if (material.matd.tx0d && material.matd.tx0d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    // If the material is specular or emissive, extract the alpha channel from the diffuse map.
-                    if (material.specular || material.glow) {
-                      const { data, width, height } = ThreeTexture.image;
-                      const channels = data.length / (width * height);
-                      let alphaData, format;
-
-                      // Use RedFormat for WebGL2 for efficiency, fallback to RGBAFormat for WebGL1.
-                      if (msh3js._supportedFeatures.webGL2.supported) {
-                        alphaData = new Uint8Array(width * height);
-                        format = THREE.RedFormat;
-                        for (let i = 0, j = 0; i < data.length; i += channels, j++) {
-                          // Use alpha if available (4 channels), otherwise default to white (255).
-                          alphaData[j] = (channels === 4) ? data[i + 3] : 255;
-                        }
-                      } else {
-                        alphaData = new Uint8Array(width * height * 4);
-                        format = THREE.RGBAFormat;
-                        for (let i = 0, j = 0; i < data.length; i += channels, j += 4) {
-                          const alpha = (channels === 4) ? data[i + 3] : 255;
-                          alphaData[j] = alpha;     // R
-                          alphaData[j + 1] = alpha; // G
-                          alphaData[j + 2] = alpha; // B
-                          alphaData[j + 3] = alpha; // A
-                        }
-                      }
-                      // Construct new DataTexture from pulled alpha channel
-                      const alphaTexture = new THREE.DataTexture(alphaData, width, height, format);
-                      alphaTexture.flipY = true;
-                      alphaTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                      alphaTexture.needsUpdate = true;
-
-                      if (material.specular) {
-                        material.three.specularMap = alphaTexture;
-                        if (msh3js.debug) console.log(`processFiles::${format === THREE.RedFormat ? 'Red' : 'RGBA'} DataTexture constructed for specularMap from alpha channel.`);
-                      }
-                      if (material.glow) {
-                        material.three.emissive = new THREE.Color(0xffffff);
-                        material.three.emissiveIntensity = 2.0;
-                        material.three.emissiveMap = alphaTexture;
-                        if (msh3js.debug) console.log(`processFiles::${format === THREE.RedFormat ? 'Red' : 'RGBA'} DataTexture constructed for emissiveMap from alpha channel.`);
-                      }
-                    }
-                    // If material rendertype is glow-scroll
-
-                    // If material is flagged as scrolling (DATA0-Horizontal speed, DATA1-Vertical speed, clone texture and have its offset adjusted in renderloop
-                    if (material.scrolling) {
-
-                    }
-                    // If material rendertype is rotate
-
-                    // If material rendertype is glow-rotate
-
-                    // If material rendertype is energy/pulsate (DATA0- Minimum Brightness, DATA1- Blink Speed)
-                    if (material.pulsate) {
-
-                    }
                     // Assign texture as diffuse map
                     material.three.map = ThreeTexture;
                     material.three.wireframe = false;
                     material.three.needsUpdate = true;
                     msh.textures.push(ThreeTexture);
-                    if (msh3js.debug) console.log('msh3js::processFiles::Created texture from alpha channel for material:', material);
+
+                    // If the material is specular, extract the alpha channel from the diffuse map.
+                    if (material.specular) {
+                      const { data, width, height } = ThreeTexture.image;
+                      const channels = data.length / (width * height);
+
+                      // Always use RGBAFormat for the DataTexture to ensure consistency.
+                      const alphaData = new Uint8Array(width * height * 4);
+                      const format = THREE.RGBAFormat;
+                      for (let i = 0, j = 0; i < data.length; i += channels, j += 4) {
+                        const alpha = (channels === 4) ? data[i + 3] : 255;
+                        alphaData[j] = alpha;     // R
+                        alphaData[j + 1] = alpha; // G
+                        alphaData[j + 2] = alpha; // B
+                        alphaData[j + 3] = alpha; // A
+                      }
+
+                      // Construct new DataTexture from pulled alpha channel
+                      const alphaTexture = new THREE.DataTexture(alphaData, width, height, format);
+                      alphaTexture.flipY = true;
+                      alphaTexture.colorSpace = THREE.LinearSRGBColorSpace;
+                      alphaTexture.wrapS = THREE.RepeatWrapping;
+                      alphaTexture.wrapT = THREE.RepeatWrapping;
+                      alphaTexture.needsUpdate = true;
+                      material.three.specularMap = alphaTexture;
+                      if (msh3js.debug) console.log('processFiles::RGBA DataTexture constructed for specularMap from alpha channel.');
+
+                    }
+
+                    if (material.glow) {
+                      material.three.emissive = new THREE.Color(0xffffff); // Use white to not tint the map
+                      material.three.emissiveMap = ThreeTexture; // The texture itself provides the glow color
+                    }
+
+                    // If material is flagged as scrolling (DATA0-Horizontal speed, DATA1-Vertical speed, clone texture and have its offset adjusted in renderloop
+                    if (material.scrolling) {
+                      const scrollingTexture = ThreeTexture.clone();
+                      scrollingTexture.wrapS = THREE.RepeatWrapping;
+                      scrollingTexture.wrapT = THREE.RepeatWrapping;
+                      // Store scroll speeds in userData. Speeds are often small, so we divide.
+                      scrollingTexture.userData.scrollSpeedU = (material.matd.atrb.data0 || 0) / 255.0;
+                      scrollingTexture.userData.scrollSpeedV = (material.matd.atrb.data1 || 0) / 255.0;
+                      material.three.map = scrollingTexture;
+                      if (msh3js.debug) console.log('processFiles::Scrolling RGBA DataTexture created by cloning diffuseMap for material:', material);
+                    }
+
+                    // If material rendertype is energy/pulsate (DATA0- Minimum Brightness, DATA1- Blink Speed)
+                    if (material.pulsate) {
+                      const pulseSpeed = material.matd.atrb.data1 || 0;
+                      if (pulseSpeed === 0) {
+                        // A speed of 0 means it's always on at max brightness
+                        material.three.userData.alwaysOn = true;
+                        if (msh3js.debug) console.log('processFiles::Pulsating material configured (Always On):', material.name);
+                      } else {
+                        // Store pulsation parameters in userData for the render loop.
+                        material.three.userData.minBrightness = (material.matd.atrb.data0 || 0) / 255.0;
+                        material.three.userData.pulseSpeed = pulseSpeed;
+                        if (msh3js.debug) console.log('processFiles::Pulsating material configured (Animated):', material.name);
+                      }
+                    }
                   }
 
                   // Handle tx1d (bump/normal map)
@@ -1305,7 +1332,11 @@ const msh3js = {
                   // TODO
                   if (material.matd.tx3d && material.matd.tx3d.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     if (material.chrome) {
-
+                      if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);
+                      const cubeTexture = msh3js.convertCrossToCube(ThreeTexture);
+                      material.three.envMap = cubeTexture;
+                      material.three.needsUpdate = true;
+                      msh.textures.push(ThreeTexture); // Keep original for reference
                     }
                   }
                 }
@@ -2154,6 +2185,54 @@ const msh3js = {
         });
       return aaControl;
     }
+  },
+
+  // Convert traditional cubemap to envmap (cubeTexture)
+  convertCrossToCube(texture) {
+    const { data, width, height } = texture.image;
+
+    // Create a temporary canvas to hold the full cross image from raw data
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = width;
+    fullCanvas.height = height;
+    const fullCtx = fullCanvas.getContext('2d');
+
+    // Create an ImageData object and put the raw TGA data into it
+    const imageData = fullCtx.createImageData(width, height);
+    imageData.data.set(data);
+    fullCtx.putImageData(imageData, 0, 0);
+
+    const image = fullCanvas; // Use the canvas as the image source
+    // Assuming a 4x3 layout for horizontal cross
+    const faceWidth = image.width / 4;
+    const faceHeight = image.height / 3;
+    // Define source coordinates for each face from the cross image
+    const faces = [
+      { name: 'px', sx: 2 * faceWidth, sy: 1 * faceHeight }, // +x
+      { name: 'nx', sx: 0 * faceWidth, sy: 1 * faceHeight }, // -x
+      { name: 'py', sx: 1 * faceWidth, sy: 0 * faceHeight }, // +y
+      { name: 'ny', sx: 1 * faceWidth, sy: 2 * faceHeight }, // -y
+      { name: 'pz', sx: 1 * faceWidth, sy: 1 * faceHeight }, // +z
+      { name: 'nz', sx: 3 * faceWidth, sy: 1 * faceHeight }, // -z, often on the far right
+    ];
+
+    const canvases = [];
+
+    for (let i = 0; i < 6; i++) {
+      const face = faces[i];
+      const canvas = document.createElement('canvas');
+      canvas.width = faceWidth;
+      canvas.height = faceHeight;
+      const context = canvas.getContext('2d');
+      // Draw the correct part of the source image onto the canvas
+      context.drawImage(image, face.sx, face.sy, faceWidth, faceHeight, 0, 0, faceWidth, faceHeight);
+      canvases.push(canvas);
+    }
+
+    const cubeTexture = new THREE.CubeTexture(canvases);
+    cubeTexture.needsUpdate = true;
+    cubeTexture.colorSpace = THREE.SRGBColorSpace;
+    return cubeTexture;
   },
 };
 
