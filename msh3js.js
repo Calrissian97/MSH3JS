@@ -237,6 +237,13 @@ const msh3js = {
       } catch (e) {
         console.error("initApp::Service Worker registration failed:", e);
       }
+      // Listen for messages from the service worker
+      navigator.serviceWorker.addEventListener('message', event => {
+        if (event.data && event.data.action === 'reload') {
+          console.log('Service Worker requested page reload.');
+          window.location.reload();
+        }
+      });
     }
     // Get supported graphics features
     await msh3js.getSupportedGraphicsFeatures();
