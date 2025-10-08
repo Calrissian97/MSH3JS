@@ -121,7 +121,7 @@ export class MSHLoader extends THREE.Loader {
                     // Colors are stored in BGRA format, convert to RGBA
                     specColor = new THREE.Color(material.matd.specularColor[2], material.matd.specularColor[1], material.matd.specularColor[0]);
                 }
-                if (material.matd.atrb.bitFlags.glow || material.matd.atrb.bitFlags.emissive || material.matd.atrb.renderFlags.glow) 
+                if (material.matd.atrb.bitFlags.glow || material.matd.atrb.bitFlags.emissive || material.matd.atrb.renderFlags.glow)
                     material.glow = true;
                 if (material.matd.atrb.renderFlags.scrolling)
                     material.scrolling = true;
@@ -445,15 +445,15 @@ export class MSHLoader extends THREE.Loader {
             }
             else model.three.visible = true;
             // If model is a cloth, add flag to scene userData
-            if (model.three.userData.isCloth) scene.userData.hasCloth = true;
+            if (model.modl.geom && model.modl.geom.cloth && model.modl.geom.cloth.length > 0) {
+                scene.userData.hasCloth = true;
+            }
             // If model is a shadowvolume, add flag to scene userData
             if (model.three.userData.isShadowVolume) scene.userData.hasShadowVolume = true;
             // If model has vertex colors, add flag to scene userData
             if (model.three.userData.hasVertexColors) scene.userData.hasVertexColors = true;
         }
         if (this.debug) console.log("parse::THREE Meshes and Materials added to output THREE Group scene.");
-
-        // Assign scene userData to pull required texture assets, materials, and models from later
         scene.userData.textures = Array.from(this.textures);
         scene.userData.materials = this.materials;
         scene.userData.models = this.models;
@@ -947,9 +947,9 @@ export class MSHLoader extends THREE.Loader {
                             fidx: { pointCount: 0, fixedPoints: null },
                             fwgt: { pointCount: 0, boneName: "" },
                             cmsh: { vertexCount: 0, trianglesCCW: null },
-                            sprs: null,
-                            cprs: null,
-                            bprs: null,
+                            sprs: { stretchCount: 0, stretchPoints: null },
+                            cprs: { crossCount: 0, crossPoints: null },
+                            bprs: { bendCount: 0, bendPoints: null },
                             coll: { collisionObjCount: 0, collisionObjects: null },
                         }
                         byteOffset += 4;
@@ -1033,6 +1033,57 @@ export class MSHLoader extends THREE.Loader {
                                     byteOffset += 12;
                                 }
                                 byteOffset = cmshEnd;
+                            } else if (clthChild === "SPRS") {
+                                byteOffset += 4;
+                                const sprsSize = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                const sprsEnd = byteOffset + sprsSize;
+                                const sprsCount = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                clth.sprs.stretchCount = sprsCount;
+                                clth.sprs.stretchPoints = new Uint16Array(sprsCount * 2);
+                                for (let i = 0; i < sprsCount; i++) {
+                                    if (byteOffset >= sprsEnd) break;
+                                    clth.sprs.stretchPoints[i * 2] = this._readUint16LE(buffer, byteOffset);
+                                    byteOffset += 2;
+                                    clth.sprs.stretchPoints[i * 2 + 1] = this._readUint16LE(buffer, byteOffset);
+                                    byteOffset += 2;
+                                }
+                                byteOffset = sprsEnd;
+                            } else if (clthChild === "CPRS") {
+                                byteOffset += 4;
+                                const cprsSize = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                const cprsEnd = byteOffset + cprsSize;
+                                const cprsCount = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                clth.cprs.crossCount = cprsCount;
+                                clth.cprs.crossPoints = new Uint16Array(cprsCount * 2);
+                                for (let i = 0; i < cprsCount; i++) {
+                                    if (byteOffset >= cprsEnd) break;
+                                    clth.cprs.crossPoints[i * 2] = this._readUint16LE(buffer, byteOffset);
+                                    byteOffset += 2;
+                                    clth.cprs.crossPoints[i * 2 + 1] = this._readUint16LE(buffer, byteOffset);
+                                    byteOffset += 2;
+                                }
+                                byteOffset = cprsEnd;
+                            } else if (clthChild === "BPRS") {
+                                byteOffset += 4;
+                                const bprsSize = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                const bprsEnd = byteOffset + bprsSize;
+                                const bprsCount = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                clth.bprs.bendCount = bprsCount;
+                                clth.bprs.bendPoints = new Uint16Array(bprsCount * 2);
+                                for (let i = 0; i < bprsCount; i++) {
+                                    if (byteOffset >= bprsEnd) break;
+                                    clth.bprs.bendPoints[i * 2] = this._readUint16LE(buffer, byteOffset);
+                                    byteOffset += 2;
+                                    clth.bprs.bendPoints[i * 2 + 1] = this._readUint16LE(buffer, byteOffset);
+                                    byteOffset += 2;
+                                }
+                                byteOffset = bprsEnd;
                             } else {
                                 // Skip unknown chunk
                                 byteOffset += 4;

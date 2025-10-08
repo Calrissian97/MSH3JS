@@ -12,8 +12,6 @@ import { TGALoader } from "three/addons/loaders/TGALoader.js";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 
-
-//import { Ammo } from "ammo";
 //import { ViewHelper } from "view-helper";
 //import { Pane } from "tweakpane";
 //import Stats from "stats-gl";
@@ -49,7 +47,9 @@ const msh3js = {
     sampleCount: 0, // sample count
     pixelRatio: 1.0, // pixel ratio
     showStats: false, // Show stats flag
-    clothSim: false, // Enable cloth simulation via Ammo.js
+    clothSim: true, // Enable cloth simulation
+    clothWindSpeed: 2.0, // Wind speed for cloth simulation
+    clothWindDirection: 280.0, // Wind direction in degrees (0-360)
   },
   // Three.JS objects
   three: {
@@ -101,8 +101,6 @@ const msh3js = {
     sceneName: "",
     textureURLs: [],
   },
-  // Ammo.js namespace
-  ammo: null,
   // Debugging flag
   debug: true,
   // App rendering time
@@ -670,40 +668,6 @@ const msh3js = {
           console.log("Stats set to:", msh3js.options.showStats);
       });
 
-    // Button to save current app options to localStorage.
-    const saveBtn = appSettingsTab.addButton({
-      title: "Save",
-      label: "Preferences:",
-    });
-    saveBtn.on("click", () => {
-      if (msh3js._supportedFeatures.localStorage === true) {
-        window.localStorage.setItem(
-          "msh3js_options",
-          JSON.stringify(msh3js.options)
-        );
-        if (msh3js.debug) console.log("User preferences saved.");
-      }
-    });
-
-    // Button to clear saved preferences from localStorage.
-    const cacheBtn = appSettingsTab.addButton({
-      title: "Clear",
-      label: "",
-    });
-    cacheBtn.on("click", () => {
-      // Add check for service worker readiness
-      if (msh3js._serviceWorker) {
-        msh3js._serviceWorker.postMessage({ action: "clearCache" });
-      } else {
-        console.warn("Service worker not active, cannot clear cache via SW.");
-      }
-      // Clear local storage preferences
-      if (msh3js._supportedFeatures.localStorage) {
-        window.localStorage.removeItem("msh3js_options");
-        if (msh3js.debug) console.log("User preferences cleared from localStorage.");
-      }
-    });
-
     // Lights Folder on the "Scene" tab.
     const lightsFolder = controlsTab.addFolder({
       title: "Lights",
@@ -945,6 +909,50 @@ const msh3js = {
           );
       });
 
+    const clothFolder = appSettingsTab.addFolder({
+      title: "Cloth Simulation",
+      expanded: true,
+    });
+
+    clothFolder.addBinding(msh3js.options, "clothSim", { label: "Enable Cloth Sim" }).on("change", () => {
+        if (msh3js.options.clothSim) msh3js.initClothSimulations();
+        else msh3js.resetClothSimulations();
+        if (msh3js.debug)
+          console.log("Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
+      });
+
+    clothFolder.addBinding(msh3js.options, "clothWindSpeed", { label: "Wind Speed", min: 0, max: 10, step: 0.1 });
+    clothFolder.addBinding(msh3js.options, "clothWindDirection", { label: "Wind Direction", min: 0, max: 360, step: 1 });
+
+    // Button to save current app options to localStorage.
+    const saveBtn = appSettingsTab.addButton({
+      title: "Save",
+      label: "Preferences:",
+    });
+    saveBtn.on("click", () => {
+      if (msh3js._supportedFeatures.localStorage === true) {
+        window.localStorage.setItem(
+          "msh3js_options",
+          JSON.stringify(msh3js.options)
+        );
+        if (msh3js.debug) console.log("User preferences saved.");
+      }
+    });
+
+    // Button to clear saved preferences from localStorage.
+    const cacheBtn = appSettingsTab.addButton({
+      title: "Clear",
+      label: "",
+    });
+    cacheBtn.on("click", () => {
+      if (msh3js._serviceWorker) {
+        msh3js._serviceWorker.postMessage({ action: "clearCache" });
+      }
+      if (msh3js._supportedFeatures.localStorage) {
+        window.localStorage.removeItem("msh3js_options");
+      }
+    });
+
     // Assign the newly created pane to the global object.
     msh3js.pane = pane;
     if (msh3js.debug)
@@ -1043,6 +1051,14 @@ const msh3js = {
             const pulse = (1 + Math.sin(time / 1000 * (pulseSpeed / 2))) / 2; // Oscillates between 0 and 1
             const brightness = minBrightness + pulse * (1.0 - minBrightness);
             material.three.color.setScalar(brightness);
+          }
+        }
+        // Update cloth simulation if enabled
+        if (msh3js.options.clothSim) {
+          if (msh.clothSimulations && msh.clothSimulations.length > 0) {
+            for (const clothSim of msh.clothSimulations) {
+              msh3js.updateClothSimulation(clothSim, elapsedTime);
+            }
           }
         }
       }
@@ -1186,6 +1202,7 @@ const msh3js = {
       if (fileObj.file.name.toLowerCase().endsWith(".msh")) {
         // Load msh file with MSHLoader
         const mshScene = await msh3js.three.mshLoader.loadAsync(fileObj.url);
+        if (msh3js.debug) console.log("processFiles::Loaded msh:", mshScene);
         // Populate three.msh with mshScene data
         msh3js.three.msh.push(
           {
@@ -1386,6 +1403,13 @@ const msh3js = {
     }
     msh3js.ui.missingTextures = Array.from(missingTextureNames);
 
+    // If the loaded model has cloth, enable the simulation by default
+    if (msh3js.three.msh.at(-1).hasCloth) {
+      msh3js.options.clothSim = true;
+      if (msh3js.pane) msh3js.pane.refresh(); // Update the UI checkbox
+      await msh3js.initClothSimulations(); // Start the simulation immediately
+    }
+
     // Hide meshes that aren't meant to be visible by default
     for (let model of msh3js.ui.models) {
       if (!model.geometry) {
@@ -1408,16 +1432,6 @@ const msh3js = {
       }
     }
 
-    // Import Ammo.js for cloth sim if desired
-    if (msh3js.three.msh.at(-1).hasCloth === true) {
-      if (msh3js.options.clothSim === true) {
-        if (!msh3js._modules.Ammo) {
-          msh3js._modules.Ammo = await import("ammo");
-          msh3js.ammo = await msh3js._modules.Ammo.default();
-          if (msh3js.debug) console.log("processFiles::Cloth found, imported Ammo.js:", msh3js.ammo, "for cloth simulations.");
-        }
-      }
-    }
     // Reconstruct Tweakpane pane if already present
     if (msh3js.pane != null) await msh3js.initTweakpane(true);
     if (msh3js.debug) console.log("processFiles::Files processed:", msh3js._files);
@@ -1766,7 +1780,8 @@ const msh3js = {
     await msh3js.initThree();
     msh3js.three.renderer.setAnimationLoop(msh3js.render);
     await msh3js.initStats(msh3js.options.showStats);
-    msh3js.frameCamera(msh3js.three.msh.at(-1).group);
+    if (msh3js.three.msh.length > 0)
+      msh3js.frameCamera(msh3js.three.msh.at(-1).group);
     if (msh3js.debug)
       console.log("recreateRenderer::Renderer recreated.");
   },
@@ -1874,7 +1889,6 @@ const msh3js = {
       500 // far plane
     ); // Create a new Three.JS camera
     msh3js.three.camera.position.set(0, 1, 5); // Set camera position
-    msh3js.three.camera.target = new THREE.Vector3(0, 1, 0);
     if (msh3js.debug) console.log("createCamera::Camera created: ", msh3js.three.camera);
     return msh3js.three.camera;
   },
@@ -1887,7 +1901,7 @@ const msh3js = {
     if (obj instanceof THREE.Box3) {
       target = obj.clone();
     } else if (obj instanceof THREE.Object3D) {
-      target = new THREE.Box3().setFromObject(obj);
+      target = new THREE.Box3().setFromObject(obj, true); // The 'true' flag considers only visible objects
     } else {
       console.warn("frameCamera::Invalid object type. Expected Box3 or Object3D.");
       return false;
@@ -1915,6 +1929,10 @@ const msh3js = {
       return true;
     }
 
+    // Dynamically adjust near and far planes
+    msh3js.three.camera.near = Math.max(0.1, radius / 100);
+    msh3js.three.camera.far = radius * 4; // Ensure far plane is well beyond the object
+
     // Calculate distance to fit object in view
     const fov = msh3js.three.camera.fov * (Math.PI / 180);
     const sin = Math.sin(fov / 2);
@@ -1934,16 +1952,23 @@ const msh3js = {
       msh3js.three.orbitControls.target.copy(center);
       msh3js.three.orbitControls.update();
     }
+    msh3js.three.camera.updateProjectionMatrix(); // Apply new near/far planes
 
-    // TODO: Place this section after msh is imported
-    if (msh3js.three.camera.far / msh3js.three.camera.near > 8000) { // reverse depth threshold
-      if (!msh3js._supportedFeatures.webGL2.supported) {
-        if (!msh3js._supportedFeatures.webGL.reverseDepth) {
-          msh3js._useReverseDepth = false;
+    // Check if the scene depth is large enough to warrant a reverse depth buffer.
+    const depthRatio = msh3js.three.camera.far / msh3js.three.camera.near;
+    if (depthRatio > 8000) { // Reverse depth threshold
+      let canUseReverseDepth = false;
+      if (msh3js._supportedFeatures.webGL2.supported || msh3js._supportedFeatures.webGL.reverseDepth) {
+        canUseReverseDepth = true;
+      }
+
+      // If reverse depth is beneficial and not already active, recreate the renderer.
+      if (canUseReverseDepth && !msh3js._useReverseDepth) {
+        if (msh3js.debug) {
+          console.log(`frameCamera::High depth ratio (${depthRatio.toFixed(0)}) detected. Enabling reverse depth buffer.`);
         }
-      } else {
         msh3js._useReverseDepth = true;
-        // TODO: Recreate renderer with reverse depth
+        msh3js.recreateRenderer(); // This will use the new _useReverseDepth value.
       }
     }
     if (msh3js.debug) console.log("frameCamera::Camera framed to object: ", obj);
@@ -1966,7 +1991,7 @@ const msh3js = {
     }
 
     msh3js.three.orbitControls = new OrbitControls(camera, canvas);
-    msh3js.three.orbitControls.target.set(0, 0.5, 0);
+    msh3js.three.orbitControls.target.set(0, 1, 0);
     msh3js.three.orbitControls.minDistance = camera.near * 1.1;
     msh3js.three.orbitControls.maxDistance = camera.far * 0.9;
     msh3js.three.orbitControls.listenToKeyEvents(window);
@@ -2233,6 +2258,281 @@ const msh3js = {
     cubeTexture.needsUpdate = true;
     cubeTexture.colorSpace = THREE.SRGBColorSpace;
     return cubeTexture;
+  },
+  // Initialize cloth simulations for all cloth meshes
+  async initClothSimulations() {
+    if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
+
+    // Dynamically import MeshBVH if not already loaded
+    let MeshBVH;
+    if (msh3js._modules.MeshBVH) {
+      MeshBVH = msh3js._modules.MeshBVH;
+    } else {
+      try {
+        const bvhModule = await import("three-mesh-bvh");
+        MeshBVH = bvhModule.MeshBVH;
+        msh3js._modules.MeshBVH = MeshBVH;
+        if (msh3js.debug) console.log("initClothSimulations::MeshBVH module dynamically imported.");
+      } catch (e) {
+        console.error("initClothSimulations::Failed to import MeshBVH:", e);
+        return; // Can't proceed without BVH
+      }
+    }
+
+    for (const msh of msh3js.three.msh) {
+      msh.clothSimulations = []; // Always re-initialize or clear existing simulations for this MSH
+
+      const clothMeshes = [];
+      const collisionObjects = [];
+
+      msh.group.traverse((obj) => {
+        if (obj.isMesh) {
+          if (obj.userData.isCloth) {
+            clothMeshes.push(obj);
+          } else if (obj.name.toLowerCase().startsWith("c_")) {
+            collisionObjects.push(obj);
+          }
+        }
+      });
+
+      // Build BVH for all collision objects
+      for (const collisionObj of collisionObjects) {
+        // The BVH is stored on the geometry for later access
+        collisionObj.geometry.boundsTree = new MeshBVH(collisionObj.geometry);
+      }
+
+      for (const clothMesh of clothMeshes) {
+        const geometry = clothMesh.geometry;
+        const positionAttr = geometry.getAttribute('position');
+
+        if (!positionAttr) continue;
+
+        let clothData = null;
+        for (const model of msh.models) {
+          if (model.modl.geom && model.modl.geom.cloth) {
+            for (const cloth of model.modl.geom.cloth) {
+              if (clothMesh.name.includes(cloth.name)) {
+                clothData = cloth;
+                break;
+              }
+            }
+          }
+          if (clothData) break;
+        }
+
+        const particles = [];
+        const constraints = [];
+        const vertexCount = positionAttr.count;
+
+        for (let i = 0; i < vertexCount; i++) {
+          const x = positionAttr.getX(i);
+          const y = positionAttr.getY(i);
+          const z = positionAttr.getZ(i);
+          const worldPos = new THREE.Vector3(x, y, z);
+          clothMesh.localToWorld(worldPos);
+
+          particles.push({
+            position: worldPos.clone(),
+            previousPosition: worldPos.clone(),
+            originalPosition: new THREE.Vector3(x, y, z),
+            velocity: new THREE.Vector3(0, 0, 0),
+            mass: 1.0,
+            fixed: false,
+          });
+        }
+
+        if (clothData && clothData.fidx && clothData.fidx.fixedPoints) {
+          for (const fixedIndex of clothData.fidx.fixedPoints) {
+            if (fixedIndex < particles.length) {
+              particles[fixedIndex].fixed = true;
+            }
+          }
+        }
+
+        // Define stiffness for each constraint type
+        const stretchStiffness = 0.9;
+        const crossStiffness = 0.7;
+        const bendStiffness = 0.2;
+
+        // Helper function to add constraints from data
+        const addConstraintsFromData = (pointData, stiffness, type) => {
+          if (!pointData) return;
+          for (let i = 0; i < pointData.length; i += 2) {
+            const pA_idx = pointData[i];
+            const pB_idx = pointData[i + 1];
+
+            if (pA_idx < particles.length && pB_idx < particles.length) {
+              const restLength = particles[pA_idx].position.distanceTo(particles[pB_idx].position);
+              constraints.push({
+                particleA: pA_idx,
+                particleB: pB_idx,
+                restLength: restLength,
+                stiffness: stiffness,
+                type: type,
+              });
+            }
+          }
+        };
+
+        if (clothData) {
+          // Add stretch constraints (SPRS)
+          if (clothData.sprs && clothData.sprs.stretchPoints) {
+            addConstraintsFromData(clothData.sprs.stretchPoints, stretchStiffness, 'stretch');
+          }
+          // Add cross constraints (CPRS)
+          if (clothData.cprs && clothData.cprs.crossPoints) {
+            addConstraintsFromData(clothData.cprs.crossPoints, crossStiffness, 'cross');
+          }
+          // Add bend constraints (BPRS)
+          if (clothData.bprs && clothData.bprs.bendPoints) {
+            addConstraintsFromData(clothData.bprs.bendPoints, bendStiffness, 'bend');
+          }
+        }
+
+        // Fallback: if no constraint data is found, generate from mesh edges
+        if (constraints.length === 0) {
+          console.warn(`No cloth constraint data found for ${clothMesh.name}. Generating from mesh edges as a fallback.`);
+          const indexAttr = geometry.getIndex();
+          if (indexAttr) {
+            for (let i = 0; i < indexAttr.array.length; i += 3) {
+              const a = indexAttr.array[i];
+              const b = indexAttr.array[i + 1];
+              const c = indexAttr.array[i + 2];
+              addConstraintsFromData([a, b, b, c, c, a], stretchStiffness, 'stretch'); // Treat all as stretch
+            }
+          }
+        }
+
+        msh.clothSimulations.push({
+          mesh: clothMesh,
+          particles: particles,
+          constraints: constraints,
+          collisionObjects: collisionObjects,
+        });
+
+        if (msh3js.debug) {
+          console.log(`Cloth simulation initialized for ${clothMesh.name}:`, {
+            particles: particles.length,
+            constraints: constraints.length,
+            fixedPoints: particles.filter(p => p.fixed).length,
+            collisionObjects: collisionObjects.length,
+          });
+        }
+      }
+    }
+  },
+
+  // Reset cloth simulations
+  resetClothSimulations() {
+    if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
+
+    for (const msh of msh3js.three.msh) {
+      if (msh.clothSimulations) {
+        for (const clothSim of msh.clothSimulations) {
+          const geometry = clothSim.mesh.geometry;
+          const positionAttr = geometry.getAttribute('position');
+
+          for (let i = 0; i < clothSim.particles.length; i++) {
+            const particle = clothSim.particles[i];
+            positionAttr.setXYZ(
+              i,
+              particle.originalPosition.x,
+              particle.originalPosition.y,
+              particle.originalPosition.z
+            );
+            particle.position.copy(particle.originalPosition);
+            particle.previousPosition.copy(particle.originalPosition);
+            particle.velocity.set(0, 0, 0);
+          }
+
+          positionAttr.needsUpdate = true;
+          geometry.computeVertexNormals();
+        }
+      }
+    }
+  },
+
+  // Update cloth simulation (Verlet integration)
+  updateClothSimulation(clothSim, deltaTime) {
+    const dt = Math.min(deltaTime, 0.016);
+    const iterations = 3; // Constraint relaxation iterations
+    const gravityStrength = 9.8;
+    const damping = 0.95;
+
+    // Add some noise/variation to the wind to make it feel more natural
+    const windStrengthVariation = (Math.sin(msh3js.renderTime / 300) + Math.sin(msh3js.renderTime / 800)) * 0.25 + 1.0; // Varies between 50% and 150%
+    const currentWindSpeed = msh3js.options.clothWindSpeed * windStrengthVariation;
+
+    const windRad = THREE.MathUtils.degToRad(msh3js.options.clothWindDirection);
+    const windForce = new THREE.Vector3(
+      Math.cos(windRad) * currentWindSpeed,
+      0,
+      Math.sin(windRad) * currentWindSpeed
+    );
+
+    const gravity = new THREE.Vector3(0, -gravityStrength, 0);
+
+    for (const particle of clothSim.particles) {
+      if (particle.fixed) continue;
+
+      const force = gravity.clone().add(windForce);
+      const acceleration = force.divideScalar(particle.mass);
+
+      const temp = particle.position.clone();
+      particle.position.multiplyScalar(2)
+        .sub(particle.previousPosition)
+        .add(acceleration.multiplyScalar(dt * dt));
+
+      particle.position.lerp(temp, 1 - damping);
+      particle.previousPosition.copy(temp);
+    }
+
+    for (let iter = 0; iter < iterations; iter++) {
+      for (const constraint of clothSim.constraints) {
+        const pA = clothSim.particles[constraint.particleA];
+        const pB = clothSim.particles[constraint.particleB];
+
+        if (pA.fixed && pB.fixed) continue;
+
+        const delta = pB.position.clone().sub(pA.position);
+        const currentLength = delta.length();
+        const diff = (currentLength - constraint.restLength) / currentLength;
+        const offset = delta.multiplyScalar(diff * constraint.stiffness * 0.5);
+
+        if (!pA.fixed) pA.position.add(offset);
+        if (!pB.fixed) pB.position.sub(offset);
+      }
+    }
+
+    for (const collisionObj of clothSim.collisionObjects) {
+      const boundingSphere = new THREE.Sphere();
+      collisionObj.geometry.computeBoundingSphere();
+      boundingSphere.copy(collisionObj.geometry.boundingSphere);
+      boundingSphere.applyMatrix4(collisionObj.matrixWorld);
+
+      for (const particle of clothSim.particles) {
+        if (particle.fixed) continue;
+
+        const distance = particle.position.distanceTo(boundingSphere.center);
+        if (distance < boundingSphere.radius) {
+          const normal = particle.position.clone().sub(boundingSphere.center).normalize();
+          particle.position.copy(boundingSphere.center).add(normal.multiplyScalar(boundingSphere.radius));
+        }
+      }
+    }
+
+    const geometry = clothSim.mesh.geometry;
+    const positionAttr = geometry.getAttribute('position');
+    const worldToLocal = new THREE.Matrix4().copy(clothSim.mesh.matrixWorld).invert();
+    if (!positionAttr) return;
+
+    for (let i = 0; i < clothSim.particles.length; i++) {
+      const localPos = clothSim.particles[i].position.clone().applyMatrix4(worldToLocal);
+      positionAttr.setXYZ(i, localPos.x, localPos.y, localPos.z);
+    }
+
+    positionAttr.needsUpdate = true;
+    geometry.computeVertexNormals();
   },
 };
 

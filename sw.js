@@ -1,19 +1,24 @@
-const CACHE_NAME = "offlineCache";
+const CACHE_NAME = "offlineCache-v2"; // Increment version to trigger update
 const URLS_TO_CACHE = [
   "./sw.js",
   "./manifest.json",
   "./package.json",
   "./index.html",
   "./msh3js.js",
+  "./msh3js.umd.js",
   "./MSHLoader.js",
   "./ViewHelper.js",
+  "./fonts/Aurebesh.ttf",
   "https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.module.min.js",
-  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/controls/OrbitControls.min.js",
-  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/TGALoader.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/controls/OrbitControls.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/TGALoader.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/EXRLoader.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/RGBELoader.js",
   "https://cdn.jsdelivr.net/npm/stats-gl/dist/main.min.js",
   "https://cdn.jsdelivr.net/npm/tweakpane/dist/tweakpane.min.js",
   "https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.min.js",
   "https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js",
+  "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.6.8/build/index.module.js",
   "./android-chrome-192x192.png",
   "./android-chrome-512x512.png",
   "./favicon-16x16.png",
@@ -27,22 +32,10 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      console.log("Adding resources to cache:", CACHE_NAME);
-
-      const cachePromises = URLS_TO_CACHE.map(async (url) => {
-        try {
-          const response = await fetch(url);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-          }
-          await cache.put(url, response);
-          console.log(`Cached ${url}`);
-        } catch (error) {
-          console.error(`Failed to cache ${url}:`, error);
-        }
-      });
-
-      await Promise.allSettled(cachePromises);  // Wait for all to settle, logging failures
+      console.log("Service Worker: Caching app shell...");
+      // Use addAll for atomic caching. If one file fails, the whole install fails.
+      // This prevents a partially cached, broken state.
+      await cache.addAll(URLS_TO_CACHE);
       self.skipWaiting();
     })()
   );
@@ -52,8 +45,12 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      // Clean up old caches
       const keys = await caches.keys();
-      await Promise.all(keys.map((key) => key !== CACHE_NAME && caches.delete(key)));
+      await Promise.all(
+        keys
+          .filter((key) => key !== CACHE_NAME)
+          .map((key) => caches.delete(key)));
 
       // Enable navigation preload if supported
       if (self.registration.navigationPreload) {
@@ -66,39 +63,49 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Fetch resources with cache-first strategy and validation
+// Fetch resources with a cache-first strategy for pre-cached assets,
+// and a network-first strategy for everything else.
 self.addEventListener("fetch", (event) => {
+  // Only handle GET requests
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  const url = new URL(event.request.url);
+
+  // For pre-cached assets, use a cache-first strategy for speed and offline reliability.
+  if (URLS_TO_CACHE.includes(url.pathname) || URLS_TO_CACHE.includes(event.request.url)) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((response) => {
+          return response || fetch(event.request);
+        });
+      })
+    );
+    return;
+  }
+
+  // For all other requests, use a network-falling-back-to-cache strategy.
   event.respondWith(
     (async () => {
-      if (event.request.method !== "GET") return fetch(event.request);
-
       // Use preload response if available
       const preloadResponse = await event.preloadResponse;
       if (preloadResponse) return preloadResponse;
 
       const cache = await caches.open(CACHE_NAME);
-      const cachedResponse = await cache.match(event.request);
 
-      // Fetch updated version from the network
       try {
-        const fetchOptions = cachedResponse
-          ? {
-              headers: new Headers({
-                //"If-Modified-Since": cachedResponse.headers.get("Last-Modified") || "",
-                //"If-None-Match": cachedResponse.headers.get("ETag") || "",
-              }),
-            }
-          : {};
-
-        const networkResponse = await fetch(event.request, fetchOptions);
-        if (networkResponse && networkResponse.status === 200 && networkResponse.url.startsWith("chrome-extension://") === false) {
+        const networkResponse = await fetch(event.request);
+        // Cache the new response, but don't cache chrome-extension:// files
+        if (networkResponse.status === 200 && !url.protocol.startsWith('chrome-extension')) {
           cache.put(event.request, networkResponse.clone());
         }
-
         return networkResponse;
       } catch (error) {
-        console.warn("Fetch failed, serving from cache if available:", event.request.url, error);
-        return cachedResponse || (event.request.mode === "navigate" ? caches.match("/index.html") : null);
+        console.warn(`Service Worker: Network request for ${event.request.url} failed, trying cache.`, error);
+        const cachedResponse = await cache.match(event.request);
+        // For navigation requests, fall back to the main index.html page.
+        return cachedResponse || (event.request.mode === 'navigate' ? caches.match('./index.html') : null);
       }
     })()
   );
@@ -112,7 +119,7 @@ self.addEventListener("message", (event) => {
     event.waitUntil(
       (async () => {
         const keys = await caches.keys();
-        await Promise.all(keys.map((cache) => caches.delete(cache)));
+        await Promise.all(keys.map((key) => caches.delete(key)));
         console.log("All caches deleted.");
         self.skipWaiting();
       })()
