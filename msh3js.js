@@ -1051,6 +1051,19 @@ const msh3js = {
             material.three.map.offset.x += material.three.map.userData.scrollSpeedU * elapsedTime;
             material.three.map.offset.y += material.three.map.userData.scrollSpeedV * elapsedTime;
           }
+          // Handle animated textures
+          if (material.three.map?.userData.isAnimated) {
+            const { gridSize, totalFrames, fps } = material.three.map.userData;
+            const frameDuration = 1 / fps;
+            const currentFrame = Math.floor((time / 1000) / frameDuration) % totalFrames;
+
+            const row = Math.floor(currentFrame / gridSize);
+            const col = currentFrame % gridSize;
+
+            // The UVs are mapped to the first cell, so we just need to offset.
+            material.three.map.offset.x = (col / gridSize);
+            material.three.map.offset.y = -(row / gridSize); // Negative offset to move "down" the texture
+          }
           // Handle pulsating materials
           if (material.pulsate && !material.three.userData.alwaysOn && material.three.userData.pulseSpeed) {
             const { minBrightness, pulseSpeed } = material.three.userData;
@@ -1315,6 +1328,30 @@ const msh3js = {
                       scrollingTexture.userData.scrollSpeedV = (material.matd.atrb.data1 || 0) / 255.0;
                       material.three.map = scrollingTexture;
                       if (msh3js.debug) console.log('processFiles::Scrolling RGBA DataTexture created by cloning diffuseMap for material:', material);
+                    }
+
+                    // If material is flagged as animated
+                    if (material.matd.atrb.renderFlags.animated) {
+                      const totalFrames = material.matd.atrb.data0 || 4; // Default to 4 frames if not specified
+                      const fps = material.matd.atrb.data1 || 10; // Default to 10 fps
+
+                      // The number of frames must be a perfect square.
+                      const gridSize = Math.sqrt(totalFrames);
+                      if (Math.floor(gridSize) !== gridSize) {
+                        console.warn(`Animated texture for material "${material.name}" has ${totalFrames} frames, which is not a perfect square. Animation may not work correctly.`);
+                      }
+
+                      const animatedTexture = ThreeTexture.clone();
+                      animatedTexture.wrapS = THREE.RepeatWrapping;
+                      animatedTexture.wrapT = THREE.RepeatWrapping;
+                      // Store animation data for the render loop
+                      animatedTexture.userData.isAnimated = true;
+                      animatedTexture.userData.gridSize = gridSize;
+                      animatedTexture.userData.totalFrames = totalFrames;
+                      animatedTexture.userData.fps = fps;
+                      // Since UVs are mapped to the first cell, we only need to offset the texture.
+                      // The repeat property should remain (1, 1).
+                      material.three.map = animatedTexture;
                     }
 
                     // If material rendertype is energy/pulsate (DATA0- Minimum Brightness, DATA1- Blink Speed)
