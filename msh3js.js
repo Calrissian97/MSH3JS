@@ -1047,15 +1047,18 @@ const msh3js = {
         // Animate materials
         for (const material of msh.materials) {
           // Handle scrolling textures
-          if (material.scrolling && material.three.map?.userData.scrollSpeedU) {
-            material.three.map.offset.x += material.three.map.userData.scrollSpeedU * elapsedTime;
-            material.three.map.offset.y += material.three.map.userData.scrollSpeedV * elapsedTime;
+          if (material.scrolling && material.three.map?.userData.isScrolling) {
+            const scrollData = material.three.map.userData;
+            material.three.map.offset.x += scrollData.scrollSpeedU * elapsedTime;
+            material.three.map.offset.y += scrollData.scrollSpeedV * elapsedTime;
           }
           // Handle animated textures
           if (material.three.map?.userData.isAnimated) {
-            const { gridSize, totalFrames, fps } = material.three.map.userData;
+            const animData = material.three.map.userData;
+            const { gridSize, totalFrames, fps } = animData;
+            animData._animationTime += elapsedTime; // Use internal timer
             const frameDuration = 1 / fps;
-            const currentFrame = Math.floor((time / 1000) / frameDuration) % totalFrames;
+            const currentFrame = Math.floor(animData._animationTime / frameDuration) % totalFrames;
 
             const row = Math.floor(currentFrame / gridSize);
             const col = currentFrame % gridSize;
@@ -1309,6 +1312,8 @@ const msh3js = {
                       alphaTexture.wrapT = THREE.RepeatWrapping;
                       alphaTexture.needsUpdate = true;
                       material.three.specularMap = alphaTexture;
+                      alphaTexture.name = ThreeTexture.name + "_alpha";
+                      msh.textures.push(alphaTexture);
                       if (msh3js.debug) console.log('processFiles::RGBA DataTexture constructed for specularMap from alpha channel.');
 
                     }
@@ -1323,10 +1328,13 @@ const msh3js = {
                       const scrollingTexture = ThreeTexture.clone();
                       scrollingTexture.wrapS = THREE.RepeatWrapping;
                       scrollingTexture.wrapT = THREE.RepeatWrapping;
+                      scrollingTexture.userData.isScrolling = true;
                       // Store scroll speeds in userData. Speeds are often small, so we divide.
                       scrollingTexture.userData.scrollSpeedU = (material.matd.atrb.data0 || 0) / 255.0;
                       scrollingTexture.userData.scrollSpeedV = (material.matd.atrb.data1 || 0) / 255.0;
                       material.three.map = scrollingTexture;
+                      scrollingTexture.name = ThreeTexture.name + "_scrolling";
+                      msh.textures.push(scrollingTexture);
                       if (msh3js.debug) console.log('processFiles::Scrolling RGBA DataTexture created by cloning diffuseMap for material:', material);
                     }
 
@@ -1349,9 +1357,11 @@ const msh3js = {
                       animatedTexture.userData.gridSize = gridSize;
                       animatedTexture.userData.totalFrames = totalFrames;
                       animatedTexture.userData.fps = fps;
-                      // Since UVs are mapped to the first cell, we only need to offset the texture.
-                      // The repeat property should remain (1, 1).
+                      animatedTexture.userData._animationTime = 0; // Add a personal timer
                       material.three.map = animatedTexture;
+                      animatedTexture.name = ThreeTexture.name + "_animated";
+                      msh.textures.push(animatedTexture);
+                      if (msh3js.debug) console.log('processFiles::Animated RGBA DataTexture created by cloning diffuseMap for material:', material);
                     }
 
                     // If material rendertype is energy/pulsate (DATA0- Minimum Brightness, DATA1- Blink Speed)
@@ -1360,12 +1370,12 @@ const msh3js = {
                       if (pulseSpeed === 0) {
                         // A speed of 0 means it's always on at max brightness
                         material.three.userData.alwaysOn = true;
-                        if (msh3js.debug) console.log('processFiles::Pulsating material configured (Always On):', material.name);
+                        if (msh3js.debug) console.log('processFiles::Pulsating material Always On- Data1=0:', material.name);
                       } else {
                         // Store pulsation parameters in userData for the render loop.
                         material.three.userData.minBrightness = (material.matd.atrb.data0 || 0) / 255.0;
                         material.three.userData.pulseSpeed = pulseSpeed;
-                        if (msh3js.debug) console.log('processFiles::Pulsating material configured (Animated):', material.name);
+                        if (msh3js.debug) console.log('processFiles::Pulsating material configured:', material.name);
                       }
                     }
                   }
@@ -1394,10 +1404,14 @@ const msh3js = {
                   if (material.matd.tx3d && material.matd.tx3d.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     if (material.chrome) {
                       if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);
+                      
+                      // The main cubemap for reflections
                       const cubeTexture = msh3js.convertCrossToCube(ThreeTexture);
                       material.three.envMap = cubeTexture;
                       material.three.needsUpdate = true;
                       msh.textures.push(ThreeTexture); // Keep original for reference
+                      cubeTexture.name = ThreeTexture.name + "_cubeTexture";
+                      msh.textures.push(cubeTexture);
                     }
                   }
                 }
@@ -1930,7 +1944,7 @@ const msh3js = {
       75, // fov
       aspect, // aspect ratio
       0.1, // near plane
-      500 // far plane
+      10000 // far plane
     ); // Create a new Three.JS camera
     msh3js.three.camera.position.set(0, 1, 5); // Set camera position
     if (msh3js.debug) console.log("createCamera::Camera created: ", msh3js.three.camera);
@@ -1975,7 +1989,10 @@ const msh3js = {
 
     // Dynamically adjust near and far planes
     msh3js.three.camera.near = Math.max(0.1, radius / 100);
-    msh3js.three.camera.far = radius * 4; // Ensure far plane is well beyond the object
+    // Ensure the far plane is large enough for the object, but not smaller than our default large value.
+    // This prevents clipping of the grid or other scene elements when a small model is loaded.
+    const requiredFarPlane = radius * 4;
+    msh3js.three.camera.far = Math.max(requiredFarPlane, 10000);
 
     // Calculate distance to fit object in view
     const fov = msh3js.three.camera.fov * (Math.PI / 180);
