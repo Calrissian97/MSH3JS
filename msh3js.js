@@ -19,6 +19,8 @@ import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 
 // Global app object/namespace for application state and data
 const msh3js = {
+  // Debugging flag
+  debug: true,
   // App options
   options: {
     controlDamping: true, // orbitControls damping
@@ -31,12 +33,12 @@ const msh3js = {
     enableDirLightHelper2: false, // Visibility of directional light helper
     dirLightColor: "#b3b3b3", // Directional light color
     dirLightIntensity: 1.0, // Directional light intensity
-    dirLightAzimuth: 0.0, // Directional light azimuth (Rotation in degrees by Y axis)
-    dirLightElevation: 0.0, // Directional light elevation (Rotation in degrees by X axis)
+    dirLightAzimuth: 90.0, // Directional light azimuth (Rotation in degrees by Y axis)
+    dirLightElevation: 30.0, // Directional light elevation (Rotation in degrees by X axis)
     dirLight2Color: "#ffffff",
     dirLight2Intensity: 0.0, // Disable secondary directional light by default
-    dirLight2Azimuth: 0.0,
-    dirLight2Elevation: 0.0,
+    dirLight2Azimuth: 270.0,
+    dirLight2Elevation: -30.0,
     ambLightColor: "#4d4d4d", // Ambient light color
     ambLightIntensity: 1.0, // Ambient light intensity
     enableViewHelper: false, // Visibility of view helper
@@ -101,8 +103,6 @@ const msh3js = {
     sceneName: "",
     textureURLs: [],
   },
-  // Debugging flag
-  debug: true,
   // App rendering time
   renderTime: 0.0,
   // App rendering interval (for 30fps animations by default)
@@ -283,7 +283,6 @@ const msh3js = {
     // }
     msh3js.manageListeners("add", "resize");
     if (msh3js.debug) console.log("initApp::msh3js initialized", msh3js);
-
     // Return app object
     return msh3js;
   },
@@ -351,7 +350,9 @@ const msh3js = {
     if (options.controlDamping !== null)
       params.controlDamping = options.controlDamping;
     if (options.dirLight !== null) params.dirLight = options.dirLight;
+    else params.dirLight = { color: "#b3b3b3", intensity: 1.0, azimuth: 90.0, elevation: 30.0};
     if (options.dirLight2 !== null) params.dirLight2 = options.dirLight2;
+    else params.dirLight2 = { color: "#ffffff", intensity: 0.0, azimuth: -90.0, elevation: -30.0};
     if (options.displayHelpers !== null)
       params.displayHelpers = options.displayHelpers;
     if (options.displayShadows !== null)
@@ -381,7 +382,6 @@ const msh3js = {
     }
     if (msh3js.debug) console.log("startApp: App started.");
     await msh3js.startThree(params);
-
   },
 
   // Add or remove Stats.js from app
@@ -473,21 +473,31 @@ const msh3js = {
       // Set ambient light color and intensity THREE MUST EXIST
       msh3js.three.ambLight.color.set(params.ambientLighting.color);
       msh3js.three.ambLight.intensity = params.ambientLighting.intensity;
+    } else {
+      msh3js.three.ambLight.color.set(msh3js.options.ambLightColor);
+      msh3js.three.ambLight.intensity = msh3js.options.ambLightIntensity;
     }
     if (params.dirLight != null) {
       // Set directional light color and intensity THREE MUST EXIST
       msh3js.three.dirLight.color.set(params.dirLight.color);
       msh3js.three.dirLight.intensity = params.dirLight.intensity;
+    } else {
+      msh3js.three.dirLight.color.set(msh3js.options.dirLightColor);
+      msh3js.three.dirLight.intensity = msh3js.options.dirLightIntensity;
     }
     if (params.dirLight2 != null) {
       // Set directional light color and intensity THREE MUST EXIST
       msh3js.three.dirLight2.color.set(params.dirLight2.color);
       msh3js.three.dirLight2.intensity = params.dirLight2.intensity;
+    } else {
+      msh3js.three.dirLight2.color.set(msh3js.options.dirLight2Color);
+      msh3js.three.dirLight2.intensity = msh3js.options.dirLight2Intensity;
     }
     // Optionally set up tweakpane and stats if needed
     if (params.displayTweakpane !== false) {
       await msh3js.initTweakpane(params.displayTweakpane);
     }
+    if (msh3js.debug === true) msh3js.options.showStats = true;
     if (params.showStats !== false) {
       await msh3js.initStats(msh3js.options.showStats);
     }
@@ -567,7 +577,52 @@ const msh3js = {
       const model = msh3js.ui.models[i];
       if (msh3js.debug) console.log("initTweakpane::Model: ", model, "added to pane.");
       const modelFolder = mshModelsFolder.addFolder({ title: model.name, expanded: false });
+      // Store original transforms if they don't exist
+      if (!model.userData.originalPosition) {
+        model.userData.originalPosition = model.position.clone();
+      }
+      if (!model.userData.originalRotation) {
+        model.userData.originalRotation = model.rotation.clone();
+      }
       modelFolder.addBinding(model, "visible", { label: "Visible" });
+
+      // Position and Rotation Folders
+      const positionFolder = modelFolder.addFolder({ title: "Position", expanded: true });
+      positionFolder.addBinding(model.position, "x", { min: -100, max: 100, step: 0.1, label: "X" });
+      positionFolder.addBinding(model.position, "y", { min: -100, max: 100, step: 0.1, label: "Y" });
+      positionFolder.addBinding(model.position, "z", { min: -100, max: 100, step: 0.1, label: "Z" });
+      positionFolder.addButton({ title: "Reset" }).on("click", () => {
+        if (model.userData.originalPosition) {
+          model.position.copy(model.userData.originalPosition);
+          // Tweakpane doesn't automatically refresh bound values on external changes,
+          // so we need to tell it to refresh.
+          pane.refresh();
+        }
+      });
+
+      const rotationFolder = modelFolder.addFolder({ title: "Rotation", expanded: true });
+      rotationFolder.addBinding(model.rotation, "x", { min: -Math.PI, max: Math.PI, step: 0.01, label: "X" })
+        .on('change', (ev) => {
+          model.rotation.x = ev.value;
+        });
+      rotationFolder.addBinding(model.rotation, "y", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Y" }).on(
+        "change",
+        (ev) => {
+          model.rotation.y = ev.value;
+        }
+      );
+      rotationFolder.addBinding(model.rotation, "z", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Z" })
+        .on('change', (ev) => {
+          model.rotation.z = ev.value;
+        });
+      rotationFolder.addButton({ title: "Reset" }).on("click", () => {
+        if (model.userData.originalRotation) {
+          model.rotation.copy(model.userData.originalRotation);
+          pane.refresh();
+        }
+      });
+
+      // Vertex Colors Toggle
       if (model.geometry.attributes.color != null && model.geometry.attributes.color.count > 0) {
         // If the model has vertex colors, add a toggle to enable/disable them.
         model.userData.vertexColors = true;
@@ -922,11 +977,11 @@ const msh3js = {
     });
 
     clothFolder.addBinding(msh3js.options, "clothSim", { label: "Enable Cloth Sim" }).on("change", () => {
-        if (msh3js.options.clothSim) msh3js.initClothSimulations();
-        else msh3js.resetClothSimulations();
-        if (msh3js.debug)
-          console.log("Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
-      });
+      if (msh3js.options.clothSim) msh3js.initClothSimulations();
+      else msh3js.resetClothSimulations();
+      if (msh3js.debug)
+        console.log("Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
+    });
 
     clothFolder.addBinding(msh3js.options, "clothWindSpeed", { label: "Wind Speed", min: 0, max: 10, step: 0.1 });
     clothFolder.addBinding(msh3js.options, "clothWindDirection", { label: "Wind Direction", min: 0, max: 360, step: 1 });
@@ -1049,8 +1104,14 @@ const msh3js = {
           // Handle scrolling textures
           if (material.scrolling && material.three.map?.userData.isScrolling) {
             const scrollData = material.three.map.userData;
-            material.three.map.offset.x += scrollData.scrollSpeedU * elapsedTime;
-            material.three.map.offset.y += scrollData.scrollSpeedV * elapsedTime;
+            // Use an internal timer to ensure frame-rate independence
+            scrollData._scrollTimeU = (scrollData._scrollTimeU + scrollData.scrollSpeedU * elapsedTime) % 1.0;
+            scrollData._scrollTimeV = (scrollData._scrollTimeV + scrollData.scrollSpeedV * elapsedTime) % 1.0;
+            material.three.map.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
+            // Also scroll the specularMap if it exists and is marked for scrolling
+            if (material.three.specularMap?.userData.isScrolling) {
+              material.three.specularMap.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
+            }
           }
           // Handle animated textures
           if (material.three.map?.userData.isAnimated) {
@@ -1066,6 +1127,11 @@ const msh3js = {
             // The UVs are mapped to the first cell, so we just need to offset.
             material.three.map.offset.x = (col / gridSize);
             material.three.map.offset.y = -(row / gridSize); // Negative offset to move "down" the texture
+
+            // Also animate the specularMap if it exists and is marked for animation
+            if (material.three.specularMap?.userData.isAnimated) {
+              material.three.specularMap.offset.copy(material.three.map.offset);
+            }
           }
           // Handle pulsating materials
           if (material.pulsate && !material.three.userData.alwaysOn && material.three.userData.pulseSpeed) {
@@ -1245,7 +1311,6 @@ const msh3js = {
         );
         // Add msh to Three scene
         msh3js.three.scene.add(mshScene);
-        msh3js.frameCamera(mshScene);
         fileProcessed = true;
       }
     }
@@ -1332,10 +1397,21 @@ const msh3js = {
                       // Store scroll speeds in userData. Speeds are often small, so we divide.
                       scrollingTexture.userData.scrollSpeedU = (material.matd.atrb.data0 || 0) / 255.0;
                       scrollingTexture.userData.scrollSpeedV = (material.matd.atrb.data1 || 0) / 255.0;
+                      scrollingTexture.userData._scrollTimeU = 0; // Internal timer for U
+                      scrollingTexture.userData._scrollTimeV = 0; // Internal timer for V
                       material.three.map = scrollingTexture;
                       scrollingTexture.name = ThreeTexture.name + "_scrolling";
                       msh.textures.push(scrollingTexture);
                       if (msh3js.debug) console.log('processFiles::Scrolling RGBA DataTexture created by cloning diffuseMap for material:', material);
+
+                      // If a specular map exists, it should scroll too.
+                      if (material.three.specularMap) {
+                        const scrollingSpecularMap = material.three.specularMap.clone();
+                        scrollingSpecularMap.userData.isScrolling = true;
+                        material.three.specularMap = scrollingSpecularMap;
+                        scrollingSpecularMap.name = material.three.specularMap.name + "_scrolling";
+                        msh.textures.push(scrollingSpecularMap);
+                      }
                     }
 
                     // If material is flagged as animated
@@ -1361,6 +1437,14 @@ const msh3js = {
                       material.three.map = animatedTexture;
                       animatedTexture.name = ThreeTexture.name + "_animated";
                       msh.textures.push(animatedTexture);
+
+                      // If a specular map exists, it should animate too.
+                      if (material.three.specularMap) {
+                        const animatedSpecularMap = material.three.specularMap.clone();
+                        animatedSpecularMap.userData.isAnimated = true;
+                        material.three.specularMap = animatedSpecularMap;
+                        msh.textures.push(animatedSpecularMap);
+                      }
                       if (msh3js.debug) console.log('processFiles::Animated RGBA DataTexture created by cloning diffuseMap for material:', material);
                     }
 
@@ -1404,7 +1488,7 @@ const msh3js = {
                   if (material.matd.tx3d && material.matd.tx3d.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     if (material.chrome) {
                       if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);
-                      
+
                       // The main cubemap for reflections
                       const cubeTexture = msh3js.convertCrossToCube(ThreeTexture);
                       material.three.envMap = cubeTexture;
@@ -1490,6 +1574,42 @@ const msh3js = {
       }
     }
 
+    // If a file was processed, update scene-dependent elements like light helpers
+    if (fileProcessed) {
+      msh3js.frameCamera(); // Frame the camera on the entire scene
+      // Recalculate light positions based on the new total scene bounds
+      msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
+      msh3js.calculateLightPosition(msh3js.three.dirLight2, msh3js.options.dirLight2Azimuth, msh3js.options.dirLight2Elevation);
+
+      // Calculate the total bounding box of all loaded MSH objects
+      const totalBoundingBox = new THREE.Box3();
+      for (const msh of msh3js.three.msh) {
+        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
+        if (!mshBBox.isEmpty()) {
+          totalBoundingBox.union(mshBBox);
+        }
+      }
+
+      // Determine a reasonable size for the helpers based on the scene's bounding sphere radius
+      const sceneRadius = totalBoundingBox.getBoundingSphere(new THREE.Sphere()).radius;
+      const helperSize = Math.max(1, sceneRadius * 0.2); // At least 1 unit, or 20% of radius
+
+      // Dispose and recreate dirLightHelper 1, ensuring it targets the world origin
+      msh3js.three.scene.remove(msh3js.three.dirLightHelper);
+      msh3js.three.dirLightHelper.dispose();
+      msh3js.three.dirLight.target.position.set(0, 0, 0); // Retarget to origin
+      msh3js.three.dirLightHelper = new THREE.DirectionalLightHelper(msh3js.three.dirLight, helperSize);
+      msh3js.three.dirLightHelper.visible = msh3js.options.enableDirLightHelper;
+      msh3js.three.scene.add(msh3js.three.dirLightHelper);
+
+      // Dispose and recreate dirLightHelper 2, ensuring it targets the world origin
+      msh3js.three.scene.remove(msh3js.three.dirLightHelper2);
+      msh3js.three.dirLightHelper2.dispose();
+      msh3js.three.dirLight2.target.position.set(0, 0, 0); // Retarget to origin
+      msh3js.three.dirLightHelper2 = new THREE.DirectionalLightHelper(msh3js.three.dirLight2, helperSize);
+      msh3js.three.dirLightHelper2.visible = msh3js.options.enableDirLightHelper2;
+      msh3js.three.scene.add(msh3js.three.dirLightHelper2);
+    }
     // Reconstruct Tweakpane pane if already present
     if (msh3js.pane != null) await msh3js.initTweakpane(true);
     if (msh3js.debug) console.log("processFiles::Files processed:", msh3js._files);
@@ -1880,8 +2000,9 @@ const msh3js = {
       // Shadow bias
       msh3js.three.dirLight.shadow.bias = -0.001;
     }
-    msh3js.calculateLightPosition(msh3js.three.dirLight);
+    msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
     msh3js.three.scene.add(msh3js.three.dirLight);
+    msh3js.three.dirLight.target.position.set(0, 0, 0);
     msh3js.three.scene.add(msh3js.three.dirLight.target);
     // Add helper for directional light
     msh3js.three.dirLightHelper = new THREE.DirectionalLightHelper(msh3js.three.dirLight, 5);
@@ -1913,14 +2034,34 @@ const msh3js = {
 
   // Calculate directional light positions
   calculateLightPosition(dirLight = null, azimuth = null, elevation = null) {
-    // Directional light parameters
-    dirLight = dirLight ?? msh3js.three.dirLight ?? msh3js.three.dirLight2 ?? null;
-    azimuth = azimuth ?? msh3js.three.dirLightAzimuth ?? msh3js.three.dirLight2Azimuth ?? 45; // degrees
-    elevation = elevation ?? msh3js.three.dirLightElevation ?? msh3js.three.dirLight2Elevation ?? 30; // degrees
-    const bboxCenter = msh3js.three.msh.at(-1)?.sceneInfo?.center ?? [0, 0, 0];
-    const center = new THREE.Vector3(bboxCenter[0], bboxCenter[1], bboxCenter[2]);
-    const radius = msh3js.three.msh.at(-1)?.sceneInfo?.radius ?? 10;
-    const distance = Math.max((radius ?? 10) + 1.0, 1.0); // ensures min 1 unit beyond radius
+    // Determine which light to use if not specified
+    const lightToUpdate = dirLight ?? msh3js.three.dirLight ?? msh3js.three.dirLight2;
+    if (!lightToUpdate) return;
+
+    // Use the correct options based on which light is being updated
+    if (lightToUpdate === msh3js.three.dirLight) {
+      azimuth = azimuth ?? msh3js.options.dirLightAzimuth;
+      elevation = elevation ?? msh3js.options.dirLightElevation;
+    } else if (lightToUpdate === msh3js.three.dirLight2) {
+      azimuth = azimuth ?? msh3js.options.dirLight2Azimuth;
+      elevation = elevation ?? msh3js.options.dirLight2Elevation;
+    }
+
+    // Calculate the total bounding box of all loaded MSH objects to correctly position the light
+    const totalBoundingBox = new THREE.Box3();
+    if (msh3js.three.msh.length > 0) {
+      for (const msh of msh3js.three.msh) {
+        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
+        if (!mshBBox.isEmpty()) {
+          totalBoundingBox.union(mshBBox);
+        }
+      }
+    }
+
+    const sceneSphere = totalBoundingBox.getBoundingSphere(new THREE.Sphere());
+    const center = sceneSphere.center;
+    const radius = sceneSphere.radius > 0 ? sceneSphere.radius : 10; // Use a default radius if scene is empty
+    const distance = radius * 1.5; // Position the light 1.5x the scene radius away from the center
     // Convert to radians and calculate light position
     const phi = THREE.MathUtils.degToRad(90 - elevation);
     const theta = THREE.MathUtils.degToRad(azimuth);
@@ -1928,9 +2069,8 @@ const msh3js = {
     const y = (distance * Math.cos(phi)) + center.y;
     const z = (distance * Math.sin(phi) * Math.sin(theta)) + center.z;
     // Set light positions if present
-    if (dirLight != null) {
-      dirLight.position.set(x, y, z);
-      dirLight.target.position.copy(center);
+    if (lightToUpdate) {
+      lightToUpdate.position.set(x, y, z);
       if (msh3js.three.dirLightHelper) msh3js.three.dirLightHelper.update();
       if (msh3js.three.dirLightHelper2) msh3js.three.dirLightHelper2.update();
     }
@@ -1954,18 +2094,23 @@ const msh3js = {
   // Frame camera to fit an object's bounding box
   // TODO: reverse depth threshold
   frameCamera(obj = null, margin = 1.0) {
-    if (!msh3js.three.camera) msh3js.createCamera();
-    let target;
-    if (obj instanceof THREE.Box3) {
-      target = obj.clone();
-    } else if (obj instanceof THREE.Object3D) {
-      target = new THREE.Box3().setFromObject(obj, true); // The 'true' flag considers only visible objects
-    } else {
-      console.warn("frameCamera::Invalid object type. Expected Box3 or Object3D.");
-      return false;
+    if (!msh3js.three.camera) msh3js.createCamera(); // Ensure camera exists
+
+    const target = new THREE.Box3();
+
+    // If an object is passed, frame it. Otherwise, frame the entire scene.
+    if (obj) {
+      target.setFromObject(obj, true);
+    } else if (msh3js.three.msh.length > 0) {
+      for (const msh of msh3js.three.msh) {
+        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
+        if (!mshBBox.isEmpty()) {
+          target.union(mshBBox);
+        }
+      }
     }
+
     if (target.isEmpty()) {
-      console.warn("frameCamera::Object is empty. Cannot frame camera.");
       return false;
     }
 
