@@ -350,9 +350,9 @@ const msh3js = {
     if (options.controlDamping !== null)
       params.controlDamping = options.controlDamping;
     if (options.dirLight !== null) params.dirLight = options.dirLight;
-    else params.dirLight = { color: "#b3b3b3", intensity: 1.0, azimuth: 90.0, elevation: 30.0};
+    else params.dirLight = { color: "#b3b3b3", intensity: 1.0, azimuth: 90.0, elevation: 30.0 };
     if (options.dirLight2 !== null) params.dirLight2 = options.dirLight2;
-    else params.dirLight2 = { color: "#ffffff", intensity: 0.0, azimuth: -90.0, elevation: -30.0};
+    else params.dirLight2 = { color: "#ffffff", intensity: 0.0, azimuth: -90.0, elevation: -30.0 };
     if (options.displayHelpers !== null)
       params.displayHelpers = options.displayHelpers;
     if (options.displayShadows !== null)
@@ -652,8 +652,33 @@ const msh3js = {
       const materialFolder = mshMaterialsFolder.addFolder({ title: material.name, expanded: false });
       materialFolder.addBinding(material.three, "wireframe", { label: "Wireframe" });
 
+      // Add a sub-folder for material attributes if they exist
+      if (material.matd.atrb) {
+        const atrbFolder = materialFolder.addFolder({ title: "Attributes", expanded: true });
+        // Find the name of the active render type
+        const renderTypeName = Object.keys(material.matd.atrb.renderFlags).find(key => material.matd.atrb.renderFlags[key] === true) || 'unknown';
+        atrbFolder.addBinding(material.matd.atrb, 'renderType', {
+          readonly: true,
+          label: "Render Type",
+          format: (v) => `${v} (${renderTypeName})`,
+        });
+
+        // Conditionally show data0 and data1 for relevant render types
+        const renderType = material.matd.atrb.renderType;
+        if ([3, 7, 11, 25].includes(renderType)) { // scrolling, animated, detail, pulsate
+          atrbFolder.addBinding(material.matd.atrb, 'data0', { readonly: true, label: "Data 0" });
+          atrbFolder.addBinding(material.matd.atrb, 'data1', { readonly: true, label: "Data 1" });
+        }
+        // Add bitFlags directly to the attributes folder
+        for (const [flag, isEnabled] of Object.entries(material.matd.atrb.bitFlags)) {
+          if (isEnabled) {
+            atrbFolder.addBinding({ [flag]: isEnabled }, flag, { readonly: true });
+          }
+        }
+      }
+
       if (textureSlots.TX0D !== 'Unassigned') {
-        const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: false });
+        const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: true });
         // List all assigned textures, add missing textures to the array
         for (const [label, textureName] of Object.entries(textureSlots)) {
           const lowerCaseTextureName = textureName.toLowerCase();
@@ -1410,7 +1435,15 @@ const msh3js = {
                         scrollingSpecularMap.userData.isScrolling = true;
                         material.three.specularMap = scrollingSpecularMap;
                         scrollingSpecularMap.name = material.three.specularMap.name + "_scrolling";
+                        material.three.needsUpdate = true;
                         msh.textures.push(scrollingSpecularMap);
+                      }
+
+                      // If glowScroll
+                      if (material.matd.atrb.renderFlags.glowScroll) {
+                        material.three.emissive = new THREE.Color(0xffffff);
+                        material.three.emissiveMap = scrollingTexture;
+                        material.three.needsUpdate = true;
                       }
                     }
 
@@ -1421,9 +1454,8 @@ const msh3js = {
 
                       // The number of frames must be a perfect square.
                       const gridSize = Math.sqrt(totalFrames);
-                      if (Math.floor(gridSize) !== gridSize) {
+                      if (Math.floor(gridSize) !== gridSize)
                         console.warn(`Animated texture for material "${material.name}" has ${totalFrames} frames, which is not a perfect square. Animation may not work correctly.`);
-                      }
 
                       const animatedTexture = ThreeTexture.clone();
                       animatedTexture.wrapS = THREE.RepeatWrapping;
@@ -1484,7 +1516,6 @@ const msh3js = {
                   }
 
                   // Handle tx3d (cubemap)
-                  // TODO
                   if (material.matd.tx3d && material.matd.tx3d.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     if (material.chrome) {
                       if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);

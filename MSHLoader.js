@@ -123,7 +123,7 @@ export class MSHLoader extends THREE.Loader {
                 }
                 if (material.matd.atrb.bitFlags.glow || material.matd.atrb.bitFlags.emissive || material.matd.atrb.renderFlags.glow)
                     material.glow = true;
-                if (material.matd.atrb.renderFlags.scrolling)
+                if (material.matd.atrb.renderFlags.scrolling || material.matd.atrb.renderFlags.glowScroll)
                     material.scrolling = true;
                 if (material.matd.atrb.renderFlags.pulsate)
                     material.pulsate = true;
@@ -598,6 +598,7 @@ export class MSHLoader extends THREE.Loader {
                     renderFlags: {
                         normal: renderType === 0,
                         glow: renderType === 1,
+                        lightMap: renderType === 2,
                         scrolling: renderType === 3,
                         specular: renderType === 4,
                         glossmap: renderType === 5,
@@ -605,6 +606,9 @@ export class MSHLoader extends THREE.Loader {
                         animated: renderType === 7,
                         ice: renderType === 8,
                         detail: renderType === 11,
+                        rotate: renderType === 13,
+                        glowRotate: renderType === 14,
+                        glowScroll: renderType === 16,
                         refracted: renderType === 22,
                         emboss: renderType === 23,
                         wireframe: renderType === 24,
