@@ -91,6 +91,11 @@ const msh3js = {
     gridHelper: null,
     // Three.JS view gizmo
     viewHelper: null,
+    // Three.JS cube camera for environment mapping
+    cubeCamera: null,
+    // Camera state for cubecam optimization
+    lastCameraPosition: null,
+    lastCameraQuaternion: null,
   },
   // Proxy object(s) for tweakpane to decouple from three
   ui: {
@@ -1120,12 +1125,20 @@ const msh3js = {
   // Main render function
   async render(time) {
     const elapsedTime = (time - (msh3js.renderTime || time)) / 1000.0;
+    const refractiveMeshes = [];
 
     // Update scrolling textures
     if (msh3js.three.msh.length > 0) {
       for (const msh of msh3js.three.msh) {
         // Animate materials
         for (const material of msh.materials) {
+          // Collect refractive meshes for the cubecam update
+          if (material.matd?.atrb?.renderFlags?.refracted) {
+            msh.group.traverse((child) => {
+              if (child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three))
+                refractiveMeshes.push(child);
+            });
+          }
           // Handle scrolling textures
           if (material.scrolling && material.three.map?.userData.isScrolling) {
             const scrollData = material.three.map.userData;
@@ -1181,6 +1194,43 @@ const msh3js = {
 
     msh3js.three.orbitControls.update();
 
+    // Update the cube camera for refraction, only if refractive meshes exist
+    if (msh3js.three.cubeCamera && refractiveMeshes.length > 0) {
+      // Check if the camera has moved since the last frame
+      let cameraMoved = false;
+      if (msh3js.three.lastCameraPosition && msh3js.three.lastCameraQuaternion) {
+        if (!msh3js.three.lastCameraPosition.equals(msh3js.three.camera.position) ||
+          !msh3js.three.lastCameraQuaternion.equals(msh3js.three.camera.quaternion)) {
+          cameraMoved = true;
+        }
+      } else {
+        // First frame, always consider it as "moved" to trigger the initial cubemap render
+        cameraMoved = true;
+      }
+
+      // Only update the cubemap if the camera has moved
+      if (cameraMoved) {
+        // Calculate the center of all refractive objects
+        const center = new THREE.Vector3();
+        const box = new THREE.Box3();
+        for (const mesh of refractiveMeshes) box.expandByObject(mesh);
+        box.getCenter(center);
+        msh3js.three.cubeCamera.position.copy(center);
+
+        // Hide refractive objects
+        for (const mesh of refractiveMeshes) mesh.visible = false;
+
+        // Update the cubemap
+        msh3js.three.cubeCamera.update(msh3js.three.renderer, msh3js.three.scene);
+
+        // Store the new camera state for the next frame's comparison
+        msh3js.three.lastCameraPosition.copy(msh3js.three.camera.position);
+        msh3js.three.lastCameraQuaternion.copy(msh3js.three.camera.quaternion);
+
+        // Show refractive objects again
+        for (const mesh of refractiveMeshes) mesh.visible = true;
+      }
+    }
     // Clear color buffer
     msh3js.three.renderer.clear(true, true, true);
 
@@ -1413,6 +1463,25 @@ const msh3js = {
                       material.three.emissiveMap = ThreeTexture; // The texture itself provides the glow color
                     }
 
+                    // If rendertype is ice refraction
+                    if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
+                      // Create CubeCamera on-demand if it doesn't exist
+                      if (!msh3js.three.cubeCamera) {
+                        const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, {
+                          format: THREE.RGBAFormat,
+                          generateMipmaps: true,
+                          minFilter: THREE.LinearMipmapLinearFilter
+                        });
+                        msh3js.three.cubeCamera = new THREE.CubeCamera(1, 1000, cubeRenderTarget);
+                        if (msh3js.debug) console.log("processFiles::CubeCamera created for refraction.");
+                      }
+                      material.three.envMap = msh3js.three.cubeCamera.renderTarget.texture;
+                      material.three.envMap.mapping = THREE.CubeRefractionMapping;
+                      material.three.refractionRatio = 0.9;
+                      material.three.combine = THREE.MixOperation; // Blend with base color
+                      if (msh3js.debug) console.log('processFiles::Refraction enabled for material:', material.name);
+                    }
+
                     // If material is flagged as scrolling (DATA0-Horizontal speed, DATA1-Vertical speed, clone texture and have its offset adjusted in renderloop
                     if (material.scrolling) {
                       const scrollingTexture = ThreeTexture.clone();
@@ -1498,21 +1567,48 @@ const msh3js = {
 
                   // Handle tx1d (bump/normal map)
                   if (material.matd.tx1d && material.matd.tx1d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    if (material.matd.atrb && (material.matd.atrb.renderFlags.bumpmap || material.matd.atrb.renderFlags.bumpmapAndGlossmap)) {
+                    if (material.matd.atrb && (material.matd.atrb.renderFlags.bumpmap || material.matd.atrb.renderFlags.bumpmapAndGlossmap || material.matd.atrb.renderFlags.refracted)) {
                       if (msh3js.debug) console.log('msh3js::processFiles::Bumpmap/Normalmap texture found for material:', material.name);
-                      // Infer if bumpmap or normalmap by filename
-                      if (fileObj.file.name.toLowerCase().includes("bump")) {
+
+                      // If refracted, always treat TX1D as a bump map for distortion.
+                      if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
                         ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
                         material.three.bumpMap = ThreeTexture;
-                        material.three.bumpScale = 0.1; // Default bump scale
-                      } else if (fileObj.file.name.toLowerCase().includes("normal")) {
-                        ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                        material.three.normalMap = ThreeTexture;
-                        material.three.normalScale = new THREE.Vector2(0.33, 0.33);
+                        material.three.bumpScale = 0.05; // A smaller value provides more subtle distortion.
+                      } else {
+                        // Otherwise, infer if bumpmap or normalmap by filename for other rendertypes
+                        if (fileObj.file.name.toLowerCase().includes("bump")) {
+                          ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+                          material.three.bumpMap = ThreeTexture;
+                          material.three.bumpScale = 0.1; // Default bump scale
+                        } else { // Default to normal map if not explicitly "bump"
+                          ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+                          material.three.normalMap = ThreeTexture;
+                          material.three.normalScale = new THREE.Vector2(0.33, 0.33);
+                        }
                       }
                       material.three.needsUpdate = true;
                       msh.textures.push(ThreeTexture);
                     }
+                  }
+
+                  // Handle tx2d (detail map, treated as a lightmap)
+                  if (material.matd.tx2d && material.matd.tx2d.toLowerCase() === fileObj.file.name.toLowerCase()) {
+                    if (msh3js.debug) console.log('msh3js::processFiles::Detail map texture found for material:', material.name);
+                    const detailTexture = ThreeTexture.clone();
+                    detailTexture.colorSpace = THREE.SRGBColorSpace;
+                    detailTexture.wrapS = THREE.RepeatWrapping;
+                    detailTexture.wrapT = THREE.RepeatWrapping;
+                    // Use data0 and data1 for tiling/scaling
+                    if (material.matd.atrb) {
+                      const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
+                      const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
+                      detailTexture.repeat.set(scaleU, scaleV);
+                    }
+                    material.three.lightMap = detailTexture;
+                    material.three.lightMapIntensity = 2.0; // Boost intensity to make it more visible
+                    material.three.needsUpdate = true;
+                    msh.textures.push(detailTexture);
                   }
 
                   // Handle tx3d (cubemap)
@@ -2118,6 +2214,10 @@ const msh3js = {
       10000 // far plane
     ); // Create a new Three.JS camera
     msh3js.three.camera.position.set(0, 1, 5); // Set camera position
+    // Initialize properties for cubecam optimization
+    msh3js.three.lastCameraPosition = new THREE.Vector3();
+    msh3js.three.lastCameraQuaternion = new THREE.Quaternion();
+
     if (msh3js.debug) console.log("createCamera::Camera created: ", msh3js.three.camera);
     return msh3js.three.camera;
   },
