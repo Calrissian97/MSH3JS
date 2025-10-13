@@ -361,29 +361,30 @@ export class MSHLoader extends THREE.Loader {
                 if (mesh.geometry.attributes.color != null && mesh.geometry.attributes.color.count > 0)
                     mesh.userData.hasVertexColors = true;
                 model.three = mesh;
-                // Construct and add cloth meshes as children
+            } else {
+                model.three = new THREE.Object3D();
+                model.three.name = model.name;
+            }
+
+            // Handle cloth geometry.
+            if (model.modl.geom && model.modl.geom.cloth.length > 0) {
+                const isClothOnly = model.modl.geom.segments.length === 0;
+
                 for (let cloth of model.modl.geom.cloth) {
-                    const geometry = new THREE.BufferGeometry();
-                    if (cloth.cpos.vertices)
-                        geometry.setAttribute("position", new THREE.Float32BufferAttribute(cloth.cpos.vertices, 3));
-                    if (cloth.cuv0.uvs)
-                        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(cloth.cuv0.uvs, 2));
-                    if (cloth.cmsh.trianglesCCW)
-                        geometry.setIndex(new THREE.Uint32BufferAttribute(cloth.cmsh.trianglesCCW, 1));
-                    // Override vertexColors to white
+                    const clothGeometry = new THREE.BufferGeometry();
                     if (cloth.cpos.vertices) {
+                        clothGeometry.setAttribute("position", new THREE.Float32BufferAttribute(cloth.cpos.vertices, 3));
                         // Create and set vertex colors to white since cloth meshes don't have them
                         const vertexCount = cloth.cpos.vertices.length / 3;
                         const colors = new Float32Array(vertexCount * 4);
-                        for (let i = 0; i < vertexCount; i++) {
-                            colors[i * 4] = 1.0;     // R
-                            colors[i * 4 + 1] = 1.0; // G
-                            colors[i * 4 + 2] = 1.0; // B
-                            colors[i * 4 + 3] = 1.0; // A
-                        }
-                        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4));
-                        geometry.computeVertexNormals();
+                        colors.fill(1.0); // Set all to white
+                        clothGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4));
+                        clothGeometry.computeVertexNormals();
                     }
+                    if (cloth.cuv0.uvs)
+                        clothGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(cloth.cuv0.uvs, 2));
+                    if (cloth.cmsh.trianglesCCW)
+                        clothGeometry.setIndex(new THREE.Uint32BufferAttribute(cloth.cmsh.trianglesCCW, 1));
 
                     const clothMat = new THREE.MeshPhongMaterial({
                         name: "clothMaterial_" + cloth.name,
@@ -393,6 +394,7 @@ export class MSHLoader extends THREE.Loader {
                         wireframe: true,
                         vertexColors: true,
                     });
+
                     const material = {
                         name: "clothMaterial_" + cloth.name,
                         three: clothMat,
@@ -401,15 +403,20 @@ export class MSHLoader extends THREE.Loader {
                     this.materials.push(material);
                     if (this.debug) console.log("parse::Material", material.name, "created for cloth", cloth.name + ".");
 
-                    const mesh = new THREE.Mesh(geometry, this.materials.at(-1).three);
-                    mesh.name = model.name + "_cloth_" + cloth.name;
-                    mesh.userData.isCloth = true;
-                    model.three.add(mesh);
-                    if (this.debug) console.log("parse::Mesh created for cloth", cloth.name + ":", mesh);
+                    const clothMesh = new THREE.Mesh(clothGeometry, clothMat);
+                    clothMesh.name = cloth.name; // Inherits from parent MODL
+                    clothMesh.userData.isCloth = true;
+
+                    if (isClothOnly) {
+                        // This is a cloth-only model. Replace the placeholder Object3D.
+                        model.three = clothMesh;
+                        if (this.debug) console.log("parse::Cloth-only mesh created for", cloth.name + ":", clothMesh);
+                    } else {
+                        // This model has regular geometry, so add cloth as a child.
+                        model.three.add(clothMesh);
+                        if (this.debug) console.log("parse::Child cloth mesh created for", cloth.name + ":", clothMesh);
+                    }
                 }
-            } else {
-                model.three = new THREE.Object3D();
-                model.three.name = model.name;
             }
             // Apply transforms (Scale is ignored ingame)
             model.three.position.set(model.modl.tran.translation[0], model.modl.tran.translation[1], model.modl.tran.translation[2]);
@@ -604,17 +611,30 @@ export class MSHLoader extends THREE.Loader {
                         glossmap: renderType === 5,
                         chrome: renderType === 6,
                         animated: renderType === 7,
-                        ice: renderType === 8,
+                        ice: renderType === 8, //deprecated
+                        sky: renderType === 9, //deprecated
+                        water: renderType === 10, //deprecated
                         detail: renderType === 11,
-                        rotate: renderType === 13,
-                        glowRotate: renderType === 14,
+                        scroll2: renderType === 12, //unsupported
+                        rotate: renderType === 13, //unsupported
+                        glowRotate: renderType === 14, //unsupported
+                        planarReflection: renderType === 15, //deprecated
                         glowScroll: renderType === 16,
+                        glowScroll2: renderType === 17, //unsupported
+                        curvedReflection: renderType === 18, //deprecated
+                        normalMapFade: renderType === 19, //unsupported
+                        normalMapInvFade: renderType === 20, //unsupported
+                        iceReflection: renderType === 21, //deprecated
                         refracted: renderType === 22,
                         emboss: renderType === 23,
                         wireframe: renderType === 24,
                         pulsate: renderType === 25,
+                        afterburner: renderType === 26, //deprecated
                         bumpmap: renderType === 27,
                         bumpmapAndGlossmap: renderType === 28,
+                        bumpmapAndDetailmapAndEnvmap: renderType === 29,
+                        multistate: renderType === 30, //deprecated
+                        shield: renderType === 31, //deprecated
                     }
                 };
             }
@@ -943,8 +963,9 @@ export class MSHLoader extends THREE.Loader {
                         }
                         geom.segments.push(segm);
                     } else if (chunkHeader === "CLTH") {
+                        if (this.debug) console.log("_readGeometries: Found CLTH chunk in MODL:", name);
                         let clth = {
-                            name: byteOffset,
+                            name: name,
                             ctex: "",
                             cpos: { vertexCount: 0, vertices: null },
                             cuv0: { uvCount: 0, uvs: null },

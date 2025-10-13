@@ -658,7 +658,7 @@ const msh3js = {
       materialFolder.addBinding(material.three, "wireframe", { label: "Wireframe" });
 
       // Add a sub-folder for material attributes if they exist
-      if (material.matd.atrb) {
+      if (material.matd && material.matd.atrb) {
         const atrbFolder = materialFolder.addFolder({ title: "Attributes", expanded: true });
         // Find the name of the active render type
         const renderTypeName = Object.keys(material.matd.atrb.renderFlags).find(key => material.matd.atrb.renderFlags[key] === true) || 'unknown';
@@ -1567,8 +1567,30 @@ const msh3js = {
 
                   // Handle tx1d (bump/normal map)
                   if (material.matd.tx1d && material.matd.tx1d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    if (material.matd.atrb && (material.matd.atrb.renderFlags.bumpmap || material.matd.atrb.renderFlags.bumpmapAndGlossmap || material.matd.atrb.renderFlags.refracted)) {
-                      if (msh3js.debug) console.log('msh3js::processFiles::Bumpmap/Normalmap texture found for material:', material.name);
+                    if (material.matd.atrb && (material.matd.atrb.renderFlags.lightMap || material.matd.atrb.renderFlags.detail)) {
+                      if (msh3js.debug) console.log('msh3js::processFiles::Detail/Lightmap texture found for material:', material.name);
+                      const detailTexture = ThreeTexture.clone();
+                      detailTexture.colorSpace = THREE.SRGBColorSpace;
+                      detailTexture.wrapS = THREE.RepeatWrapping;
+                      detailTexture.wrapT = THREE.RepeatWrapping;
+                      // Use data0 and data1 for tiling/scaling
+                      if (material.matd.atrb) {
+                        const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
+                        const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
+                        detailTexture.repeat.set(scaleU, scaleV);
+                      }
+                      material.three.lightMap = detailTexture;
+                      material.three.lightMapIntensity = 2.0; // Boost intensity to make it more visible
+                      material.three.needsUpdate = true;
+                      msh.textures.push(detailTexture);
+                    }
+                    else if (material.matd.atrb && (material.matd.atrb.renderFlags.bumpmap || material.matd.atrb.renderFlags.bumpmapAndGlossmap ||
+                       material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.bumpmapAndDetailmapAndEnvmap)) {
+                      if (msh3js.debug) {
+                        if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice)
+                          console.log('msh3js::processFiles::Bumpmap for refraction found for material:', material.name);
+                        else console.log('msh3js::processFiles::Bumpmap/Normalmap texture found for material:', material.name);
+                      }
 
                       // If refracted, always treat TX1D as a bump map for distortion.
                       if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
@@ -1594,36 +1616,39 @@ const msh3js = {
 
                   // Handle tx2d (detail map, treated as a lightmap)
                   if (material.matd.tx2d && material.matd.tx2d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    if (msh3js.debug) console.log('msh3js::processFiles::Detail map texture found for material:', material.name);
-                    const detailTexture = ThreeTexture.clone();
-                    detailTexture.colorSpace = THREE.SRGBColorSpace;
-                    detailTexture.wrapS = THREE.RepeatWrapping;
-                    detailTexture.wrapT = THREE.RepeatWrapping;
-                    // Use data0 and data1 for tiling/scaling
-                    if (material.matd.atrb) {
-                      const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
-                      const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
-                      detailTexture.repeat.set(scaleU, scaleV);
+                    // For most render types, tx2d is a detail map (which we treat as a lightMap).
+                    // The 'detail' and 'lightMap' render types are exceptions that use tx1d.
+                    if (material.matd.atrb && (!material.matd.atrb.renderFlags.detail && !material.matd.atrb.renderFlags.lightMap)) {
+                      if (msh3js.debug) console.log('msh3js::processFiles::Detail map (from TX2D) found for material:', material.name);
+                      const detailTexture = ThreeTexture.clone();
+                      detailTexture.colorSpace = THREE.SRGBColorSpace;
+                      detailTexture.wrapS = THREE.RepeatWrapping;
+                      detailTexture.wrapT = THREE.RepeatWrapping;
+                      // Use data0 and data1 for tiling/scaling if available
+                      if (material.matd.atrb) {
+                        const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
+                        const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
+                        detailTexture.repeat.set(scaleU, scaleV);
+                      }
+                      material.three.lightMap = detailTexture;
+                      material.three.lightMapIntensity = 2.0; // Boost intensity to make it more visible
+                      material.three.needsUpdate = true;
+                      msh.textures.push(detailTexture);
                     }
-                    material.three.lightMap = detailTexture;
-                    material.three.lightMapIntensity = 2.0; // Boost intensity to make it more visible
-                    material.three.needsUpdate = true;
-                    msh.textures.push(detailTexture);
                   }
 
                   // Handle tx3d (cubemap)
                   if (material.matd.tx3d && material.matd.tx3d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    if (material.chrome) {
-                      if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);
+                    if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);
 
-                      // The main cubemap for reflections
-                      const cubeTexture = msh3js.convertCrossToCube(ThreeTexture);
-                      material.three.envMap = cubeTexture;
-                      material.three.needsUpdate = true;
-                      msh.textures.push(ThreeTexture); // Keep original for reference
-                      cubeTexture.name = ThreeTexture.name + "_cubeTexture";
-                      msh.textures.push(cubeTexture);
-                    }
+                    // The main cubemap for reflections
+                    const cubeTexture = msh3js.convertCrossToCube(ThreeTexture);
+                    material.three.envMap = cubeTexture;
+                    material.three.needsUpdate = true;
+                    msh.textures.push(ThreeTexture); // Keep original for reference
+                    cubeTexture.name = ThreeTexture.name + "_cubeTexture";
+                    msh.textures.push(cubeTexture);
+
                   }
                 }
               }
@@ -2265,10 +2290,8 @@ const msh3js = {
 
     // Dynamically adjust near and far planes
     msh3js.three.camera.near = Math.max(0.1, radius / 100);
-    // Ensure the far plane is large enough for the object, but not smaller than our default large value.
-    // This prevents clipping of the grid or other scene elements when a small model is loaded.
-    const requiredFarPlane = radius * 4;
-    msh3js.three.camera.far = Math.max(requiredFarPlane, 10000);
+    // The far plane should be based on the object's radius to avoid z-fighting on small models.
+    msh3js.three.camera.far = radius * 4;
 
     // Calculate distance to fit object in view
     const fov = msh3js.three.camera.fov * (Math.PI / 180);
@@ -2308,7 +2331,13 @@ const msh3js = {
         msh3js.recreateRenderer(); // This will use the new _useReverseDepth value.
       }
     }
-    if (msh3js.debug) console.log("frameCamera::Camera framed to object: ", obj);
+    if (msh3js.debug) {
+      if (obj) {
+        console.log("frameCamera::Camera framed to object: ", obj);
+      } else {
+        console.log("frameCamera::Camera framed to scene.");
+      }
+    }
     return true;
   },
 
@@ -2648,7 +2677,7 @@ const msh3js = {
         for (const model of msh.models) {
           if (model.modl.geom && model.modl.geom.cloth) {
             for (const cloth of model.modl.geom.cloth) {
-              if (clothMesh.name.includes(cloth.name)) {
+              if (clothMesh.name === cloth.name) {
                 clothData = cloth;
                 break;
               }
