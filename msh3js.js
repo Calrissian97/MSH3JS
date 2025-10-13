@@ -590,42 +590,44 @@ const msh3js = {
         model.userData.originalRotation = model.rotation.clone();
       }
       modelFolder.addBinding(model, "visible", { label: "Visible" });
-
-      // Position and Rotation Folders
-      const positionFolder = modelFolder.addFolder({ title: "Position", expanded: true });
-      positionFolder.addBinding(model.position, "x", { min: -100, max: 100, step: 0.1, label: "X" });
-      positionFolder.addBinding(model.position, "y", { min: -100, max: 100, step: 0.1, label: "Y" });
-      positionFolder.addBinding(model.position, "z", { min: -100, max: 100, step: 0.1, label: "Z" });
-      positionFolder.addButton({ title: "Reset" }).on("click", () => {
-        if (model.userData.originalPosition) {
-          model.position.copy(model.userData.originalPosition);
-          // Tweakpane doesn't automatically refresh bound values on external changes,
-          // so we need to tell it to refresh.
-          pane.refresh();
-        }
-      });
-
-      const rotationFolder = modelFolder.addFolder({ title: "Rotation", expanded: true });
-      rotationFolder.addBinding(model.rotation, "x", { min: -Math.PI, max: Math.PI, step: 0.01, label: "X" })
-        .on('change', (ev) => {
-          model.rotation.x = ev.value;
+      
+      // Position and Rotation Folders (only for non-cloth meshes)
+      if (!model.userData.isCloth) {
+        const positionFolder = modelFolder.addFolder({ title: "Position", expanded: true });
+        positionFolder.addBinding(model.position, "x", { min: -100, max: 100, step: 0.1, label: "X" });
+        positionFolder.addBinding(model.position, "y", { min: -100, max: 100, step: 0.1, label: "Y" });
+        positionFolder.addBinding(model.position, "z", { min: -100, max: 100, step: 0.1, label: "Z" });
+        positionFolder.addButton({ title: "Reset" }).on("click", () => {
+          if (model.userData.originalPosition) {
+            model.position.copy(model.userData.originalPosition);
+            // Tweakpane doesn't automatically refresh bound values on external changes,
+            // so we need to tell it to refresh.
+            pane.refresh();
+          }
         });
-      rotationFolder.addBinding(model.rotation, "y", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Y" }).on(
-        "change",
-        (ev) => {
-          model.rotation.y = ev.value;
-        }
-      );
-      rotationFolder.addBinding(model.rotation, "z", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Z" })
-        .on('change', (ev) => {
-          model.rotation.z = ev.value;
+
+        const rotationFolder = modelFolder.addFolder({ title: "Rotation", expanded: true });
+        rotationFolder.addBinding(model.rotation, "x", { min: -Math.PI, max: Math.PI, step: 0.01, label: "X" })
+          .on('change', (ev) => {
+            model.rotation.x = ev.value;
+          });
+        rotationFolder.addBinding(model.rotation, "y", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Y" }).on(
+          "change",
+          (ev) => {
+            model.rotation.y = ev.value;
+          }
+        );
+        rotationFolder.addBinding(model.rotation, "z", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Z" })
+          .on('change', (ev) => {
+            model.rotation.z = ev.value;
+          });
+        rotationFolder.addButton({ title: "Reset" }).on("click", () => {
+          if (model.userData.originalRotation) {
+            model.rotation.copy(model.userData.originalRotation);
+            pane.refresh();
+          }
         });
-      rotationFolder.addButton({ title: "Reset" }).on("click", () => {
-        if (model.userData.originalRotation) {
-          model.rotation.copy(model.userData.originalRotation);
-          pane.refresh();
-        }
-      });
+      }
 
       // Vertex Colors Toggle
       if (model.geometry.attributes.color != null && model.geometry.attributes.color.count > 0) {
