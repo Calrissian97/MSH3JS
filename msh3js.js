@@ -590,7 +590,7 @@ const msh3js = {
         model.userData.originalRotation = model.rotation.clone();
       }
       modelFolder.addBinding(model, "visible", { label: "Visible" });
-      
+
       // Position and Rotation Folders (only for non-cloth meshes)
       if (!model.userData.isCloth) {
         const positionFolder = modelFolder.addFolder({ title: "Position", expanded: true });
@@ -1347,11 +1347,11 @@ const msh3js = {
   // Adds input files to a global files object
   addFiles(files) {
     for (const file of files) {
-      const lowerName = file.name.toLowerCase();
-      if ((lowerName.endsWith(".msh") || lowerName.endsWith(".tga")) && msh3js._files[lowerName] == null) {
+      const lowerName = file.name.toLowerCase();      
+      if ((lowerName.endsWith(".msh") || lowerName.endsWith(".tga") || lowerName.endsWith(".msh.option")) && msh3js._files[lowerName] == null) {
         msh3js._files[lowerName] = {
           file: file,
-          url: URL.createObjectURL(file),
+          url: URL.createObjectURL(file)
         };
       }
     }
@@ -1364,12 +1364,13 @@ const msh3js = {
     if (msh3js.three.scene == null) await msh3js.startThree(msh3js.params);
     // Check for msh files and add them
     let fileProcessed = false;
+    const mshFilesToProcess = [];
     for (const fileObj of Object.values(msh3js._files)) {
       if (fileObj.file.name.toLowerCase().endsWith(".msh")) {
         // Load msh file with MSHLoader
         const mshScene = await msh3js.three.mshLoader.loadAsync(fileObj.url);
         if (msh3js.debug) console.log("processFiles::Loaded msh:", mshScene);
-        // Populate three.msh with mshScene data
+        // Populate msh data object
         msh3js.three.msh.push(
           {
             fileName: fileObj.file.name,
@@ -1386,9 +1387,52 @@ const msh3js = {
             hasVertexColors: mshScene.userData.hasVertexColors,
           }
         );
+        mshFilesToProcess.push(msh3js.three.msh.at(-1));
         // Add msh to Three scene
         msh3js.three.scene.add(mshScene);
         fileProcessed = true;
+      }
+    }
+
+    // After loading MSH files, check for and apply .msh.option files
+    for (const mshData of mshFilesToProcess) {
+      const optionFileName = mshData.fileName.toLowerCase() + ".option";
+      const optionFileObj = msh3js._files[optionFileName];
+
+      if (optionFileObj) {
+        if (msh3js.debug) console.log(`processFiles::Found option file for ${mshData.fileName}`);
+        const optionText = await optionFileObj.file.text();
+        const lines = optionText.split(/\r?\n/);
+
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/).filter(p => p); // Split by whitespace and remove empty parts
+          for (let i = 0; i < parts.length; i++) {
+            const command = parts[i].toLowerCase();
+
+            if (command === "-bump") {
+              // Process all subsequent parts as texture names until another flag or the end of the line is found.
+              let j = i + 1;
+              while (j < parts.length && !parts[j].startsWith('-')) {
+                const textureName = parts[j].toLowerCase();
+                const bumpTextureName = textureName.replace(/(\.tga)?$/, "_bump.tga");
+                if (msh3js.debug) console.log(`processFiles::-bump rule found. Applying ${bumpTextureName} to materials using ${textureName}.tga`);
+
+                // Find materials using this texture and add the bump map requirement
+                for (const material of mshData.materials) {
+                  if (material.matd?.tx0d?.toLowerCase() === `${textureName}.tga`) {
+                    material.matd.tx1d = bumpTextureName; // This will be picked up by the texture loader.
+                    if (material.matd.atrb && !material.matd.atrb.renderFlags.bumpmap) {
+                      material.matd.atrb.renderFlags.bumpmap = true; // Ensure render type supports bump mapping.
+                    }
+                    mshData.requiredTextures.push(bumpTextureName);
+                  }
+                }
+                j++; // Move to the next part
+              }
+              i = j - 1; // Update the outer loop index to continue after the processed textures.
+            }
+          }
+        }
       }
     }
     // Check for textures and assign them to Three materials if required
@@ -1587,7 +1631,7 @@ const msh3js = {
                       msh.textures.push(detailTexture);
                     }
                     else if (material.matd.atrb && (material.matd.atrb.renderFlags.bumpmap || material.matd.atrb.renderFlags.bumpmapAndGlossmap ||
-                       material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.bumpmapAndDetailmapAndEnvmap)) {
+                      material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.bumpmapAndDetailmapAndEnvmap)) {
                       if (msh3js.debug) {
                         if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice)
                           console.log('msh3js::processFiles::Bumpmap for refraction found for material:', material.name);
@@ -1600,15 +1644,16 @@ const msh3js = {
                         material.three.bumpMap = ThreeTexture;
                         material.three.bumpScale = 0.05; // A smaller value provides more subtle distortion.
                       } else {
-                        // Otherwise, infer if bumpmap or normalmap by filename for other rendertypes
-                        if (fileObj.file.name.toLowerCase().includes("bump")) {
+                        // Check if the texture is grayscale to determine if it's a bump map.
+                        if (msh3js.isTextureGrayscale(ThreeTexture)) {
+                          if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as bump map (grayscale).');
                           ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
                           material.three.bumpMap = ThreeTexture;
                           material.three.bumpScale = 0.1; // Default bump scale
-                        } else { // Default to normal map if not explicitly "bump"
+                        } else { // Otherwise, treat it as a normal map.
+                          if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as normal map (color).');
                           ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
                           material.three.normalMap = ThreeTexture;
-                          material.three.normalScale = new THREE.Vector2(0.33, 0.33);
                         }
                       }
                       material.three.needsUpdate = true;
@@ -2497,7 +2542,7 @@ const msh3js = {
       fileInput.type = "file";
       fileInput.style.display = "none";
       fileInput.multiple = true;
-      fileInput.accept = ".msh,.tga";
+      fileInput.accept = ".msh,.tga,.msh.option";
       msh3js._appContainer.appendChild(fileInput);
       msh3js._fileInput = fileInput;
       msh3js.manageListeners("add", "fileInput");
@@ -2627,6 +2672,42 @@ const msh3js = {
     cubeTexture.colorSpace = THREE.SRGBColorSpace;
     return cubeTexture;
   },
+  // Check if a texture is grayscale
+  isTextureGrayscale(texture, tolerance = 5, sampleSize = 100) {
+    const { data, width, height } = texture.image;
+    const channels = data.length / (width * height);
+
+    // Textures with 1 (Luminance) or 2 (LuminanceAlpha) channels are inherently grayscale.
+    if (channels === 1 || channels === 2) return true;
+
+    // We can only sample pixels for RGB and RGBA textures.
+    if (channels < 3) return false; // Should not happen if the above cases are handled.
+
+    const numPixels = width * height;
+    const step = Math.max(1, Math.floor(numPixels / sampleSize));
+
+    let grayscalePixels = 0;
+    let sampledPixels = 0;
+
+    for (let i = 0; i < numPixels; i += step) {
+      const r = data[i * channels];
+      const g = data[i * channels + 1];
+      const b = data[i * channels + 2];
+
+      const rgDiff = Math.abs(r - g);
+      const rbDiff = Math.abs(r - b);
+      const gbDiff = Math.abs(g - b);
+
+      if (rgDiff <= tolerance && rbDiff <= tolerance && gbDiff <= tolerance) {
+        grayscalePixels++;
+      }
+      sampledPixels++;
+    }
+
+    // If over 90% of sampled pixels are grayscale, consider the texture grayscale.
+    return (grayscalePixels / sampledPixels) > 0.9;
+  },
+
   // Initialize cloth simulations for all cloth meshes
   async initClothSimulations() {
     if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
