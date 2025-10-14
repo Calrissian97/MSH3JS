@@ -15,6 +15,8 @@ export class MSHLoader extends THREE.Loader {
         this.models = null;
         this.materials = null;
         this.textures = null;
+        this.animations = null;
+        this.keyframes = null;
         // File op globals
         this.buffer = null;
         this.byteOffset = null;
@@ -27,6 +29,8 @@ export class MSHLoader extends THREE.Loader {
         this.models = null;
         this.materials = null;
         this.textures = null;
+        this.animations = null;
+        this.keyframes = null;
     }
 
     load(url, onLoad, onProgress, onError) {
@@ -85,6 +89,8 @@ export class MSHLoader extends THREE.Loader {
             this.models = [];
             this.materials = [];
             this.textures = new Set();
+            this.animations = [];
+            this.keyframes = [];
         } catch (error) { console.error("parse::Error initializing MSHLoader:", error); }
 
         // Output scene
@@ -94,6 +100,11 @@ export class MSHLoader extends THREE.Loader {
         this.sceneInfo = this._readSceneInfo(this.buffer);
         this.materials = this._readMaterials(this.buffer);
         this.models = this._readGeometries(this.buffer);
+        const animData = this._readAnimations(this.buffer);
+        if (animData) {
+            this.animations = animData.animations;
+            this.keyframes = animData.keyframes;
+        }
         this.textures = Array.from(this.textures);
         if (this.debug) {
             console.log("parse::MSH file data read.")
@@ -101,6 +112,8 @@ export class MSHLoader extends THREE.Loader {
             console.log("parse::Materials:", this.materials);
             console.log("parse::Textures:", this.textures);
             console.log("parse::Models:", this.models);
+            console.log("parse::Animations:", this.animations);
+            console.log("parse::Keyframes:", this.keyframes);
         }
 
         // Construct Three.js Material objects inside this.materials[x].three
@@ -465,6 +478,8 @@ export class MSHLoader extends THREE.Loader {
         scene.userData.materials = this.materials;
         scene.userData.models = this.models;
         scene.userData.sceneInfo = this.sceneInfo;
+        scene.userData.animations = this.animations;
+        scene.userData.keyframes = this.keyframes;
         scene.name = this.sceneInfo.name;
         if (this.debug) console.log("parse::Scene userData objects assigned, scene ready:", scene);
         return scene;
@@ -772,7 +787,7 @@ export class MSHLoader extends THREE.Loader {
                 byteOffset += 4;
                 const geomEnd = byteOffset + geomSize;
                 byteOffset += 52; // Skip BBOX
-                geom = { segments: [], cloth: [] };
+                geom = { segments: [], cloth: [], envelope: null };
                 while (byteOffset < geomEnd) {
                     const chunkHeader = this._readString(buffer, byteOffset, 4);
                     if (chunkHeader === "SEGM") {
@@ -786,7 +801,7 @@ export class MSHLoader extends THREE.Loader {
                             strp: { triangleStrips: null, trianglesCCW: null },
                             clrl: { colors: null },
                             clrb: { color: null },
-                            wght: null,
+                            wght: { weightCount: 0, weights: null },
                             shdw: null,
                         };
                         byteOffset += 4; // Skip SEGM header
@@ -954,6 +969,33 @@ export class MSHLoader extends THREE.Loader {
                                 segm.clrb.color[2] = this._readUint8LE(buffer, byteOffset + 2);
                                 segm.clrb.color[3] = this._readUint8LE(buffer, byteOffset + 3);
                                 byteOffset += 4;
+                            } else if (segmentChild === "WGHT") {
+                                byteOffset += 4;
+                                const wghtSize = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                const wghtEnd = byteOffset + wghtSize;
+                                const wghtCount = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                segm.wght.weightCount = wghtCount;
+
+                                // Each vertex has 4 bone indices and 4 weights.
+                                const boneIndices = new Uint16Array(wghtCount * 4);
+                                const boneWeights = new Float32Array(wghtCount * 4);
+
+                                for (let i = 0; i < wghtCount; i++) {
+                                    const baseIndex = i * 4;
+                                    if (byteOffset + 32 > wghtEnd) break; // Safety check
+
+                                    for (let j = 0; j < 4; j++) {
+                                        boneIndices[baseIndex + j] = this._readUint32LE(buffer, byteOffset);
+                                        byteOffset += 4;
+                                        boneWeights[baseIndex + j] = this._readFloat32LE(buffer, byteOffset);
+                                        byteOffset += 4;
+                                    }
+                                }
+                                segm.wght.indices = boneIndices;
+                                segm.wght.weights = boneWeights;
+                                byteOffset = wghtEnd;
                             } else {
                                 // Skip unknown chunk
                                 byteOffset += 4;
@@ -970,7 +1012,7 @@ export class MSHLoader extends THREE.Loader {
                             cpos: { vertexCount: 0, vertices: null },
                             cuv0: { uvCount: 0, uvs: null },
                             fidx: { pointCount: 0, fixedPoints: null },
-                            fwgt: { pointCount: 0, boneName: "" },
+                            fwgt: { pointCount: 0, boneNames: null },
                             cmsh: { vertexCount: 0, trianglesCCW: null },
                             sprs: { stretchCount: 0, stretchPoints: null },
                             cprs: { crossCount: 0, crossPoints: null },
@@ -1041,6 +1083,28 @@ export class MSHLoader extends THREE.Loader {
                                     byteOffset += 4;
                                 }
                                 byteOffset = fidxEnd;
+                            } else if (clthChild === "FWGT") {
+                                byteOffset += 4;
+                                const fwgtSize = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                const fwgtEnd = byteOffset + fwgtSize;
+                                const fwgtCount = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                clth.fwgt.pointCount = fwgtCount;
+                                clth.fwgt.boneNames = new Array(fwgtCount);
+                                for (let i = 0; i < fwgtCount; i++) {
+                                    if (byteOffset >= fwgtEnd) break;
+                                    const boneNameChars = [];
+                                    while (byteOffset < fwgtEnd) {
+                                        const charCode = this._readUint8LE(buffer, byteOffset);
+                                        byteOffset++;
+                                        if (charCode === 0) break;
+                                        boneNameChars.push(String.fromCharCode(charCode));
+                                    }
+                                    const boneName = boneNameChars.join('');
+                                    clth.fwgt.boneNames[i] = boneName;
+                                }
+                                byteOffset = fwgtEnd;
                             } else if (clthChild === "CMSH") {
                                 byteOffset += 4;
                                 const cmshSize = this._readUint32LE(buffer, byteOffset);
@@ -1118,6 +1182,24 @@ export class MSHLoader extends THREE.Loader {
                         }
                         geom.cloth.push(clth);
                         byteOffset = clothEnd;
+                    } else if (chunkHeader === "ENVL") {
+                        if (this.debug) console.log("_readGeometries: Found ENVL chunk in MODL:", name);
+                        byteOffset += 4; // Skip ENVL header
+                        const envlSize = this._readUint32LE(buffer, byteOffset);
+                        byteOffset += 4;
+                        const envlEnd = byteOffset + envlSize;
+
+                        const numIndices = this._readUint32LE(buffer, byteOffset);
+                        byteOffset += 4;
+
+                        const indices = new Uint32Array(numIndices);
+                        for (let i = 0; i < numIndices; i++) {
+                            if (byteOffset >= envlEnd) break;
+                            indices[i] = this._readUint32LE(buffer, byteOffset);
+                            byteOffset += 4;
+                        }
+                        geom.envelope = { count: numIndices, indices: indices };
+                        byteOffset = envlEnd;
                     } else {
                         // Skip unknown chunk
                         byteOffset += 4;
@@ -1140,6 +1222,101 @@ export class MSHLoader extends THREE.Loader {
             });
         }
         return models;
+    }
+
+    // Read all animations from ANM2 chunk and return an array of objects
+    _readAnimations(buffer) {
+        let anm2 = this._findChunk(buffer, "ANM2");
+        if (!anm2) return null;
+        const animations = [];
+        let byteOffset = anm2.chunkStart + 12; // Skip CYCL header
+        const cyclSize = this._readUint32LE(buffer, byteOffset);
+        byteOffset += 4;
+        const cyclEnd = byteOffset + cyclSize;
+        const animationCount = this._readUint32LE(buffer, byteOffset);
+        byteOffset += 4;
+        for (let i = 0; i < animationCount; i++) {
+            if (byteOffset >= cyclEnd) break;
+            let animName = this._readString(buffer, byteOffset, 64);
+            byteOffset += 64;
+            let fps = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            let playStyle = this._readUint32LE(buffer, byteOffset);
+            byteOffset += 4;
+            let firstFrame = this._readUint32LE(buffer, byteOffset);
+            byteOffset += 4;
+            let lastFrame = this._readUint32LE(buffer, byteOffset);
+            byteOffset += 4;
+            let anim = {
+                name: animName,
+                fps,
+                playStyle,
+                firstFrame,
+                lastFrame
+            };
+            animations.push(anim);
+        }
+        byteOffset = cyclEnd;
+        const keyframes = [];
+        byteOffset += 4; // Skip KFR3 chunk header
+        const kfr3Size = this._readUint32LE(buffer, byteOffset);
+        byteOffset += 4;
+        const kfr3End = byteOffset + kfr3Size;
+        const boneCount = this._readUint32LE(buffer, byteOffset);
+        byteOffset += 4;
+        for (let i = 0; i < boneCount; i++) {
+            if (byteOffset >= kfr3End) break; // Safety break
+
+            const boneCRC = this._readUint32LE(buffer, byteOffset);
+            byteOffset += 4;
+            const keyframeType = this._readUint32LE(buffer, byteOffset);
+            byteOffset += 4;
+            const translationFramesCount = this._readUint32LE(buffer, byteOffset);
+            byteOffset += 4;
+            const rotationFramesCount = this._readUint32LE(buffer, byteOffset);
+            byteOffset += 4;
+
+            const translationFrames = [];
+            for (let j = 0; j < translationFramesCount; j++) {
+                if (byteOffset >= kfr3End) break;
+                const frameIndex = this._readUint32LE(buffer, byteOffset);
+                byteOffset += 4;
+                const x = this._readFloat32LE(buffer, byteOffset);
+                byteOffset += 4;
+                const y = this._readFloat32LE(buffer, byteOffset);
+                byteOffset += 4;
+                const z = this._readFloat32LE(buffer, byteOffset);
+                byteOffset += 4;
+                translationFrames.push({ frame: frameIndex, value: [x, y, z] });
+            }
+
+            const rotationFrames = [];
+            for (let j = 0; j < rotationFramesCount; j++) {
+                if (byteOffset >= kfr3End) break;
+                const frameIndex = this._readUint32LE(buffer, byteOffset);
+                byteOffset += 4;
+                const x = this._readFloat32LE(buffer, byteOffset);
+                byteOffset += 4;
+                const y = this._readFloat32LE(buffer, byteOffset);
+                byteOffset += 4;
+                const z = this._readFloat32LE(buffer, byteOffset);
+                byteOffset += 4;
+                const w = this._readFloat32LE(buffer, byteOffset);
+                byteOffset += 4;
+                rotationFrames.push({ frame: frameIndex, value: [x, y, z, w] });
+            }
+
+            // A "keyframe" in this context is the full set of animation data for a single bone.
+            const boneKeyframes = {
+                boneCRC,
+                keyframeType,
+                translations: translationFrames,
+                rotations: rotationFrames,
+            };
+            keyframes.push(boneKeyframes);
+        }
+        byteOffset = kfr3End;
+        return { animations, keyframes };
     }
 
     // Remove degenerate (zero-area or duplicate) triangles
