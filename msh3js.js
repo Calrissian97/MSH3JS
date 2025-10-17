@@ -8,10 +8,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { MSHLoader } from "MSHLoader";
 import { TGALoader } from "three/addons/loaders/TGALoader.js";
-// Note: The following will be imported dynamically instead
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
-
+// Note: The following will be imported dynamically instead
 //import { ViewHelper } from "view-helper";
 //import { Pane } from "tweakpane";
 //import Stats from "stats-gl";
@@ -340,7 +339,16 @@ const msh3js = {
     let _appContainer = document.getElementById("app") ?? document.getElementById("msh3js") ?? document.body;
     msh3js._tweakpaneContainer = document.getElementById("tweakpaneContainer") ?? document.createElement("div");
     msh3js._tweakpaneContainer.id = "tweakpaneContainer";
-    msh3js._tweakpaneContainer.draggable = "true";
+    // Style the container to be positioned absolutely and on top.
+    msh3js._tweakpaneContainer.style.position = 'absolute';
+    msh3js._tweakpaneContainer.style.top = '10px';
+    msh3js._tweakpaneContainer.style.right = '10px';
+    msh3js._tweakpaneContainer.style.zIndex = '10'; // Ensure it's above the canvas
+    msh3js._tweakpaneContainer.style.width = '256px'; // Default Tweakpane width
+
+    // Make the container draggable
+    msh3js.makeDraggable(msh3js._tweakpaneContainer);
+
     _appContainer.appendChild(msh3js._tweakpaneContainer);
     // Either get canvas from param or from HTML or create a new one and append it to the container
     let appCanvas = canvas ?? _appContainer.getElementById("msh3jsCanvas") ??
@@ -544,7 +552,7 @@ const msh3js = {
       msh3js._modules.TweakpanePluginHtmlColorPicker = TweakpanePluginHtmlColorPicker;
     }
     // Initialize the main Tweakpane instance and register the imported plugins.
-    const pane = new Pane({ title: "Controls", expanded: true }); // Main pane
+    const pane = new Pane({ title: "Controls", expanded: true, container: msh3js._tweakpaneContainer }); // Main pane
     pane.registerPlugin(TweakpanePluginHtmlColorPicker);
     // Create the main tab layout for organizing controls.
     const tab = pane.addTab({
@@ -906,15 +914,24 @@ const msh3js = {
         view: "html-color-picker",
       })
       .on("change", () => {
+        // When color is changed, remove any background image
+        msh3js.three.scene.backgroundTexture = null;
         msh3js.three.scene.background = new THREE.Color(
           msh3js.options.backgroundColor
         );
         if (msh3js.debug)
           console.log(
-            "Background color set to:",
-            msh3js.options.backgroundColor
+            "Background set to color:",
+            msh3js.options.backgroundColor,
+            "and image cleared."
           );
       });
+
+    // Button to upload a background image.
+    bgFolder.addButton({ title: "Upload Background Image" }).on("click", () => {
+      // Create and click a hidden file input.
+      msh3js.createBackgroundImageInput().click();
+    });
 
     // View Folder for camera and viewport helper controls.
     const viewFolder = controlsTab.addFolder({
@@ -1026,9 +1043,53 @@ const msh3js = {
         console.log("Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
     });
 
-    clothFolder.addBinding(msh3js.options, "clothWindSpeed", { label: "Wind Speed", min: 0, max: 10, step: 0.1 });
-    clothFolder.addBinding(msh3js.options, "clothWindDirection", { label: "Wind Direction", min: 0, max: 360, step: 1 });
+    clothFolder.addBinding(msh3js.options, "clothWindSpeed", {
+      label: "Wind Speed",
+      min: 0,
+      max: 10,
+      step: 0.1
+    });
+    clothFolder.addBinding(msh3js.options, "clothWindDirection", {
+      label: "Wind Direction",
+      min: 0,
+      max: 360,
+      step: 1
+    });
 
+    // Preferences Folder for saving and clearing settings.
+    const preferencesFolder = appSettingsTab.addFolder({
+      title: "Preferences",
+      expanded: true,
+    });
+
+    // Button to save current app options to localStorage.
+    const saveBtn = preferencesFolder.addButton({
+      title: "Save",
+      label: "",
+    });
+    saveBtn.on("click", () => {
+      if (msh3js._supportedFeatures.localStorage === true) {
+        window.localStorage.setItem(
+          "msh3js_options",
+          JSON.stringify(msh3js.options)
+        );
+        if (msh3js.debug) console.log("User preferences saved.");
+      }
+    });
+
+    // Button to clear saved preferences from localStorage.
+    const cacheBtn = preferencesFolder.addButton({
+      title: "Clear",
+      label: "",
+    });
+    cacheBtn.on("click", () => {
+      if (msh3js._serviceWorker) {
+        msh3js._serviceWorker.postMessage({ action: "clearCache" });
+      }
+      if (msh3js._supportedFeatures.localStorage) {
+        window.localStorage.removeItem("msh3js_options");
+      }
+    });
 
     // Animation list
     const animationsFolder = animationsTab.addFolder({
@@ -1117,35 +1178,6 @@ const msh3js = {
             action.reset().play();
           }
         });
-      }
-    });
-
-    // Button to save current app options to localStorage.
-    const saveBtn = appSettingsTab.addButton({
-      title: "Save",
-      label: "Preferences:",
-    });
-    saveBtn.on("click", () => {
-      if (msh3js._supportedFeatures.localStorage === true) {
-        window.localStorage.setItem(
-          "msh3js_options",
-          JSON.stringify(msh3js.options)
-        );
-        if (msh3js.debug) console.log("User preferences saved.");
-      }
-    });
-
-    // Button to clear saved preferences from localStorage.
-    const cacheBtn = appSettingsTab.addButton({
-      title: "Clear",
-      label: "",
-    });
-    cacheBtn.on("click", () => {
-      if (msh3js._serviceWorker) {
-        msh3js._serviceWorker.postMessage({ action: "clearCache" });
-      }
-      if (msh3js._supportedFeatures.localStorage) {
-        window.localStorage.removeItem("msh3js_options");
       }
     });
 
@@ -1497,7 +1529,6 @@ const msh3js = {
         mshFilesToProcess.push(msh3js.three.msh.at(-1));
         // Add msh to Three scene
         msh3js.three.scene.add(mshScene);
-
         fileProcessed = true;
       }
     }
@@ -1546,10 +1577,15 @@ const msh3js = {
     // Check for textures and assign them to Three materials if required
     for (const fileObj of Object.values(msh3js._files)) {
       if (fileObj.file.name.toLowerCase().endsWith(".tga")) {
-        // Ensure file is a required texture of a msh
+        // Check if the texture is required by any of the loaded MSH files.
         let required = false;
         for (const msh of msh3js.three.msh) {
           if (msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) {
+            required = true;
+            break; // Found a requirement, no need to check other MSH files.
+          }
+        }
+        if (required) {
             // Load tga file with TGALoader
             console.log("msh3js::processFiles::Loading texture:", fileObj.file.name);
             let material = null; // Hoist material to be accessible in catch block
@@ -1560,9 +1596,13 @@ const msh3js = {
               ThreeTexture.wrapS = THREE.RepeatWrapping;
               ThreeTexture.wrapT = THREE.RepeatWrapping;
               ThreeTexture.flipY = true;
-              msh.textures.push(ThreeTexture);
-              // Assign textures to materials
-              for (material of msh.materials) {
+
+              // Assign texture to all materials in all MSH files that require it.
+              for (const msh of msh3js.three.msh) {
+                if (!msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) continue;
+
+                msh.textures.push(ThreeTexture);
+                for (material of msh.materials) {
                 if (material.texture != undefined) {
                   // Handle generated cloth material
                   if (material.texture.toLowerCase() === fileObj.file.name.toLowerCase()) {
@@ -1724,7 +1764,7 @@ const msh3js = {
                     if (material.matd.atrb && (material.matd.atrb.renderFlags.lightMap || material.matd.atrb.renderFlags.detail)) {
                       if (msh3js.debug) console.log('msh3js::processFiles::Detail/Lightmap texture found for material:', material.name);
                       const detailTexture = ThreeTexture.clone();
-                      detailTexture.colorSpace = THREE.SRGBColorSpace;
+                      detailTexture.colorSpace = THREE.LinearSRGBColorSpace;
                       detailTexture.wrapS = THREE.RepeatWrapping;
                       detailTexture.wrapT = THREE.RepeatWrapping;
                       // Use data0 and data1 for tiling/scaling
@@ -1805,15 +1845,14 @@ const msh3js = {
                   }
                 }
               }
+              }
             } catch (error) {
               console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
             }
-            required = true;
             fileProcessed = true;
-          }
-        }
-        // If texture isn't required, delete from files array
-        if (!required) {
+        } else if (msh3js.three.msh.length > 0) {
+          // If MSH files have been loaded and this texture is not required by any of them, discard it.
+          if (msh3js.debug) console.log(`processFiles::Discarding unrequired texture: ${fileObj.file.name}`);
           delete msh3js._files[fileObj.file.name.toLowerCase()];
         }
       }
@@ -1906,6 +1945,14 @@ const msh3js = {
     if (msh3js.debug) console.log("handleFileInput::Files selected:", files);
     msh3js.addFiles(files);
     await msh3js.processFiles(msh3js._files)
+  },
+  // Handles the file input for the background image
+  async handleBackgroundImageInput(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const fileURL = URL.createObjectURL(file);
+    msh3js.loadAndSetBackground(fileURL, file.name.toLowerCase());
   },
 
   // Handles the file input for animation-only MSH files
@@ -2250,7 +2297,9 @@ const msh3js = {
     await msh3js.initThree();
     msh3js.three.renderer.setAnimationLoop(msh3js.render);
     await msh3js.initStats(msh3js.options.showStats);
-    if (msh3js.three.msh.length > 0)
+    if (msh3js.three.msh.length > 1)
+      msh3js.frameCamera(); // Frame entire scene if multiple msh files are imported
+    else if (msh3js.three.msh.length > 0)
       msh3js.frameCamera(msh3js.three.msh.at(-1).group);
     if (msh3js.debug)
       console.log("recreateRenderer::Renderer recreated.");
@@ -2666,6 +2715,26 @@ const msh3js = {
     return animFileInput;
   },
 
+  // Create and append HTML file input for background image
+  createBackgroundImageInput() {
+    let bgFileInput = document.getElementById("bgFileInput");
+    // If it exists, remove it and create a new one to clear the event listener and value
+    if (bgFileInput) bgFileInput.remove();
+
+    try {
+      bgFileInput = document.createElement("input");
+      bgFileInput.id = "bgFileInput";
+      bgFileInput.type = "file";
+      bgFileInput.style.display = "none";
+      // Accept common image formats supported by THREE's loaders
+      bgFileInput.accept = "image/png, image/jpeg, image/jpg, image/webp, .tga, .exr, .hdr";
+      msh3js._appContainer.appendChild(bgFileInput);
+      bgFileInput.addEventListener("change", msh3js.handleBackgroundImageInput, { once: true });
+    } catch (e) { console.error("createBackgroundImageInput::Error creating file input:", e); }
+
+    return bgFileInput;
+  },
+
   // Create splash to direct user
   /* -deprecated-
   createSplashScreen() {
@@ -2819,6 +2888,37 @@ const msh3js = {
 
     // If over 90% of sampled pixels are grayscale, consider the texture grayscale.
     return (grayscalePixels / sampledPixels) > 0.9;
+  },
+  // Loads a texture and sets it as the scene background.
+  async loadAndSetBackground(url, filename) {
+    if (!msh3js.three.textureLoader) msh3js.createLoaders();
+
+    let loader = msh3js.three.textureLoader; // Default to standard image loader
+
+    // Select the correct loader based on file extension
+    if (filename.endsWith('.tga')) {
+      loader = msh3js.three.tgaLoader;
+    } else if (filename.endsWith('.exr')) {
+      loader = msh3js.three.exrLoader;
+    } else if (filename.endsWith('.hdr')) {
+      loader = msh3js.three.rgbeLoader;
+    }
+
+    try {
+      const backgroundTexture = await loader.loadAsync(url);
+      backgroundTexture.mapping = THREE.EquirectangularReflectionMapping;
+      backgroundTexture.colorSpace = THREE.SRGBColorSpace;
+
+      msh3js.three.scene.background = backgroundTexture;
+      msh3js.three.scene.environment = backgroundTexture; // Also set as environment map for reflections
+
+      if (msh3js.debug) console.log(`loadAndSetBackground::Successfully set ${filename} as background and environment.`);
+    } catch (error) {
+      console.error(`loadAndSetBackground::Error loading background image ${filename}:`, error);
+      alert(`Failed to load background image: ${filename}\n\n${error}`);
+    } finally {
+      URL.revokeObjectURL(url); // Clean up the object URL
+    }
   },
 
   // Imports and applies animations from one or more MSH files to the currently loaded model(s).
@@ -3254,6 +3354,49 @@ const msh3js = {
     }
     if (msh3js.pane) msh3js.pane.refresh();
     if (msh3js.debug) console.log("stopAllAnimations::All animations stopped.");
+  },
+
+  // Makes an HTML element draggable.
+  makeDraggable(element) {
+    let isDragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    const onMouseDown = (e) => {
+      // Only start dragging if the click is on the pane's title bar or a folder header
+      const target = e.target;
+      if (target.classList.contains('tp-rotv_t')) {
+        isDragging = true;
+        offsetX = e.clientX - element.getBoundingClientRect().left;
+        offsetY = e.clientY - element.getBoundingClientRect().top;
+        element.style.cursor = 'grabbing';
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      }
+    };
+
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+
+      const parentRect = msh3js._appContainer.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+
+      // Calculate the new position, clamped within the parent container's bounds.
+      let newLeft = e.clientX - offsetX;
+      let newTop = e.clientY - offsetY;
+
+      element.style.left = `${Math.max(0, Math.min(newLeft, parentRect.width - elementRect.width))}px`;
+      element.style.top = `${Math.max(0, Math.min(newTop, parentRect.height - elementRect.height))}px`;
+    };
+
+    const onMouseUp = () => {
+      isDragging = false;
+      element.style.cursor = 'grab';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    element.addEventListener('mousedown', onMouseDown);
   },
 };
 
