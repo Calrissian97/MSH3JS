@@ -48,6 +48,7 @@ const msh3js = {
     sampleCount: 0, // sample count
     pixelRatio: 1.0, // pixel ratio
     showStats: false, // Show stats flag
+    showSkeleton: false,
     clothSim: true, // Enable cloth simulation
     clothWindSpeed: 2.0, // Wind speed for cloth simulation
     clothWindDirection: 280.0, // Wind direction in degrees (0-360)
@@ -92,6 +93,8 @@ const msh3js = {
     gridHelper: null,
     // Three.JS view gizmo
     viewHelper: null,
+    // Skeleton helper
+    skeletonHelper: null,
     // Three.JS cube camera for environment mapping
     cubeCamera: null,
     // Camera state for cubecam optimization
@@ -1134,6 +1137,18 @@ const msh3js = {
       msh3js.stopAllAnimations(false);
     });
 
+    // Add toggle for showing the skeleton
+    // Doesn't work correctly
+    /*
+    animationsFolder.addBinding(msh3js.options, 'showSkeleton', {
+      label: 'Show Skeleton'
+    }).on('change', (ev) => {
+      if (msh3js.debug) console.log("Skeleton visibility set to:", ev.value);
+      if (msh3js.three.skeletonHelper)
+        msh3js.three.skeletonHelper.visible = ev.value;
+    });
+    */
+
     // Add slider to adjust playback speed
     animationsPlaybackFolder.addBinding(msh3js.ui, "animationPlaying", {
       label: "Status",
@@ -1531,6 +1546,27 @@ const msh3js = {
         msh3js.three.scene.add(mshScene);
         fileProcessed = true;
       }
+
+      // After adding the scene, traverse it to find a SkinnedMesh and create a SkeletonHelper
+      if (mshFilesToProcess.length > 0) {
+        // Dispose of the old helper if it exists
+        if (msh3js.three.skeletonHelper) {
+          msh3js.three.scene.remove(msh3js.three.skeletonHelper);
+          msh3js.three.skeletonHelper.dispose();
+          msh3js.three.skeletonHelper = null;
+        }
+        mshFilesToProcess.at(-1).group.traverse((child) => {
+          // Create one helper for the first SkinnedMesh found
+          if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
+            msh3js.three.scene.updateMatrixWorld(true);
+            const helper = new THREE.SkeletonHelper(child);
+            helper.name = "skeletonHelper";
+            helper.visible = msh3js.options.showSkeleton;
+            msh3js.three.scene.add(helper);
+            msh3js.three.skeletonHelper = helper;
+          }
+        });
+      }
     }
 
     // After loading MSH files, check for and apply .msh.option files
@@ -1667,6 +1703,7 @@ const msh3js = {
                           minFilter: THREE.LinearMipmapLinearFilter
                         });
                         msh3js.three.cubeCamera = new THREE.CubeCamera(1, 1000, cubeRenderTarget);
+                        msh3js.three.cubeCamera.name = "CubeCamera";
                         if (msh3js.debug) console.log("processFiles::CubeCamera created for refraction.");
                       }
                       material.three.envMap = msh3js.three.cubeCamera.renderTarget.texture;
@@ -2308,17 +2345,23 @@ const msh3js = {
   // Create and assign Three.js scene
   createScene() {
     msh3js.three.scene = new THREE.Scene();
+    msh3js.three.scene.name = "MSH3JS_Scene";
+
     msh3js.three.scene.background = new THREE.Color(msh3js.options.backgroundColor);
     // Create a single animation mixer for the scene
     msh3js.three.mixer = new THREE.AnimationMixer(msh3js.three.scene);
+    msh3js.three.mixer.name = "sceneAnimationMixer";
     if (msh3js.debug) console.log("createScene::AnimationMixer created for the scene.");
 
     // Add ambient light
     msh3js.three.ambLight = new THREE.AmbientLight(msh3js.options.ambLightColor, msh3js.options.ambLightIntensity);
+    msh3js.three.ambLight.name = "ambientLight";
     msh3js.three.scene.add(msh3js.three.ambLight);
 
     // Add directional light
     msh3js.three.dirLight = new THREE.DirectionalLight(msh3js.options.dirLightColor, msh3js.options.dirLightIntensity);
+    msh3js.three.dirLight.name = "directionalLight1";
+    msh3js.three.dirLight.target.name = "directionalLight1Target";
     msh3js.three.dirLight.castShadow = msh3js.options.enableShadows;
     if (msh3js.three.dirLight.castShadow === true) {
       msh3js.three.dirLight.shadow.mapSize.width = 512;
@@ -2350,11 +2393,14 @@ const msh3js = {
     msh3js.three.scene.add(msh3js.three.dirLight.target);
     // Add helper for directional light
     msh3js.three.dirLightHelper = new THREE.DirectionalLightHelper(msh3js.three.dirLight, 5);
+    msh3js.three.dirLightHelper.name = "directionalLightHelper1";
     msh3js.three.dirLightHelper.visible = msh3js.options.enableDirLightHelper;
     msh3js.three.scene.add(msh3js.three.dirLightHelper);
 
     // Add directional light 2
     msh3js.three.dirLight2 = new THREE.DirectionalLight(0xaaaaff, 0.0);
+    msh3js.three.dirLight2.name = "directionalLight2";
+    msh3js.three.dirLight2.target.name = "directionalLight2Target";
     msh3js.three.dirLight2.castShadow = false;
     msh3js.three.dirLight2.position.set(-msh3js.three.dirLight.position.x, // Inverse direction of dirLight by default
       -msh3js.three.dirLight.position.y, -msh3js.three.dirLight.position.z);
@@ -2364,11 +2410,13 @@ const msh3js = {
 
     // Add helper for directional light 2
     msh3js.three.dirLightHelper2 = new THREE.DirectionalLightHelper(msh3js.three.dirLight2, 5);
+    msh3js.three.dirLightHelper2.name = "directionalLightHelper2";
     msh3js.three.dirLightHelper2.visible = msh3js.options.enableDirLightHelper2;
     msh3js.three.scene.add(msh3js.three.dirLightHelper2);
 
     // Add grid helper
     msh3js.three.gridHelper = new THREE.GridHelper(10, 10);
+    msh3js.three.gridHelper.name = "gridHelper";
     msh3js.three.gridHelper.visible = msh3js.options.enableGrid;
     msh3js.three.scene.add(msh3js.three.gridHelper);
 
@@ -2434,7 +2482,7 @@ const msh3js = {
     // Initialize properties for cubecam optimization
     msh3js.three.lastCameraPosition = new THREE.Vector3();
     msh3js.three.lastCameraQuaternion = new THREE.Quaternion();
-
+    msh3js.three.camera.name = "sceneCamera";
     if (msh3js.debug) console.log("createCamera::Camera created: ", msh3js.three.camera);
     return msh3js.three.camera;
   },
@@ -2549,6 +2597,7 @@ const msh3js = {
     }
 
     msh3js.three.orbitControls = new OrbitControls(camera, canvas);
+    msh3js.three.orbitControls.name = "orbitControls";
     msh3js.three.orbitControls.target.set(0, 1, 0);
     msh3js.three.orbitControls.minDistance = camera.near * 1.1;
     msh3js.three.orbitControls.maxDistance = camera.far * 0.9;
@@ -2734,49 +2783,6 @@ const msh3js = {
 
     return bgFileInput;
   },
-
-  // Create splash to direct user
-  /* -deprecated-
-  createSplashScreen() {
-    if (msh3js.splashScreen != null) return msh3js.splashScreen;
-    try {
-      // Create SVG element
-      msh3js.splashScreen = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      msh3js.splashScreen.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-      msh3js.splashScreen.setAttribute("width", msh3js.size.width + "px");
-      msh3js.splashScreen.setAttribute("height", msh3js.size.height + "px");
-      msh3js.splashScreen.id = "splashScreen";
-      msh3js.splashScreen.style.cursor = "pointer";
-      msh3js.splashScreen.style.zIndex = "2";
-      msh3js.splashScreen.style.backgroundColor = "#000000CC";
-      msh3js.splashScreen.style.position = "absolute";
-      msh3js.splashScreen.style.top = "0";
-      msh3js.splashScreen.style.left = "0";
-
-      // Create text element
-      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.setAttribute("id", "splashText");
-      text.setAttribute("x", "50%");
-      text.setAttribute("y", "50%");
-      text.setAttribute("text-anchor", "middle");
-      text.setAttribute("dominant-baseline", "middle");
-      text.setAttribute("font-family", "system-ui");
-      text.setAttribute("font-size", "14pt");
-      text.setAttribute("fill", "#F8F8F8");
-      text.textContent = "Drag and Drop or Click here\nto select a .msh file";
-      msh3js.splashScreen.appendChild(text);
-      // Append SVG to _appContainer
-      msh3js._appContainer.appendChild(msh3js.splashScreen);
-    } catch (e) {
-      console.error("createSplashScreen::Error creating splash screen:", e);
-      msh3js.splashScreen = null;
-      return null;
-    }
-    if (msh3js.debug)
-      console.log("createSplashScreen::Splash screen created and appended to DOM: ", msh3js.splashScreen);
-    return msh3js.splashScreen;
-  },
-  */
 
   // Generates an AA control for tweakpane
   generateAAControl(sampleCountOptions = null, renderingFolder = null) {

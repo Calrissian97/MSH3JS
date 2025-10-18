@@ -542,6 +542,7 @@ export class MSHLoader extends THREE.Loader {
         // --- Step 4: Create and Bind the Skeleton ---
         // If any bones were created, we can now build the skeleton.
         if (allBones.length > 0) {
+            scene.updateMatrixWorld(true); // Matrix MUST be updated before creating skelly
             // Create a single skeleton from the flat list of all bones. The hierarchy is already set up.
             const skeleton = new THREE.Skeleton(allBones);
             if (this.debug) console.log("parse::Skeleton created:", skeleton);
@@ -567,7 +568,7 @@ export class MSHLoader extends THREE.Loader {
                             skinIndexAttribute.array[i] = boneMndxToSkeletonIndex.get(mndx) ?? 0; // Default to bone 0 if not found
                         }
                     }
-                    model.three.bind(skeleton);
+                    model.three.bind(skeleton, model.three.matrixWorld); // Matrix MUST be included to calculate inverse matrices
                 }
             }
         }
@@ -1147,7 +1148,7 @@ export class MSHLoader extends THREE.Loader {
                                         byteOffset += 4;
                                     }
                                 }
-
+                                
                                 segm.wght.indices = boneIndices;
                                 segm.wght.weights = boneWeights;
                                 byteOffset = wghtEnd;
@@ -1344,7 +1345,6 @@ export class MSHLoader extends THREE.Loader {
 
                         const numIndices = this._readUint32LE(buffer, byteOffset);
                         byteOffset += 4;
-
                         const indices = new Uint32Array(numIndices);
 
                         for (let i = 0; i < numIndices; i++) { // numIndices is the vertex count
@@ -1352,6 +1352,7 @@ export class MSHLoader extends THREE.Loader {
                             indices[i] = this._readUint32LE(buffer, byteOffset);
                             byteOffset += 4;
                         }
+
                         geom.envelope = { count: numIndices, indices: indices };
                         byteOffset = envlEnd;
                     } else {
