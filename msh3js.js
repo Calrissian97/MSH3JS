@@ -1129,13 +1129,14 @@ const msh3js = {
     });
 
     // Add dropdown to select animation, which will be present even if no model is loaded
-    animationsFolder.addBinding(msh3js.ui, 'currentAnimation', {
+    const animationDropdown = animationsFolder.addBinding(msh3js.ui, 'currentAnimation', {
       label: 'Current Animation:',
       options: animOptions,
     }).on('change', (ev) => {
       // When an animation is selected, just stop any currently playing one. Don't auto-play.
       msh3js.stopAllAnimations(false);
     });
+    msh3js.ui.animationDropdown = animationDropdown; // Store the reference
 
     // Add toggle for showing the skeleton
     // Doesn't work correctly
@@ -1205,6 +1206,37 @@ const msh3js = {
     msh3js.pane.refresh();
 
     return pane;
+  },
+
+  // Updates just the animation list in Tweakpane without rebuilding the whole UI.
+  updateAnimationList() {
+    if (!msh3js.pane || !msh3js.ui.animationDropdown) {
+      if (msh3js.debug) console.log("updateAnimationList:: Pane or dropdown not ready, skipping update.");
+      return;
+    }
+
+    if (msh3js.debug) console.log("updateAnimationList:: Refreshing animation dropdown.");
+
+    // Prepare the new list of options, starting with the default 'None'.
+    const newAnimOptions = [{ text: 'None', value: 'None' }];
+    const allAnimNames = new Set();
+
+    // Gather all unique animation names from all loaded MSH objects.
+    for (const msh of msh3js.three.msh) {
+      if (msh.animations && msh.animations.length > 0) {
+        for (const anim of msh.animations) {
+          allAnimNames.add(anim.name);
+        }
+      }
+    }
+
+    // Add the unique names to our options list.
+    for (const name of allAnimNames) {
+      newAnimOptions.push({ text: name, value: name });
+    }
+
+    // Update the options on the existing Tweakpane control.
+    msh3js.ui.animationDropdown.options = newAnimOptions;
   },
 
   // Manages listeners by group (renderTrigger, resize, fileDrop) and action (add/remove)
@@ -2942,7 +2974,6 @@ const msh3js = {
         if (child.isBone) existingBoneNames.add(child.name);
       });
     }
-    if (msh3js.debug) console.log("importAnimations::Existing bone names on target model(s):", existingBoneNames);
 
     let animationsAdded = false;
     for (const file of files) {
@@ -2991,8 +3022,8 @@ const msh3js = {
     }
     // If we successfully added animations, rebuild the UI to show them.
     if (animationsAdded) {
-      if (msh3js.pane) await msh3js.initTweakpane(true);
-      if (msh3js.debug) console.log("importAnimations::UI updated with new animations.");
+      msh3js.updateAnimationList(); // Efficiently update only the dropdown
+      if (msh3js.debug) console.log("importAnimations::Animation list updated.");
     }
   },
 
@@ -3364,25 +3395,42 @@ const msh3js = {
 
   // Makes an HTML element draggable.
   makeDraggable(element) {
-    let isDragging = false;
+    let isDragging = false; // Is a drag operation in progress?
+    let hasDragged = false; // Did the mouse move enough to be considered a drag?
     let offsetX = 0;
     let offsetY = 0;
+    const startPos = { x: 0, y: 0 };
+    const dragThreshold = 5; // Minimum pixels to move before it's a drag
 
     const onMouseDown = (e) => {
       // Only start dragging if the click is on the pane's title bar or a folder header
       const target = e.target;
       if (target.classList.contains('tp-rotv_t')) {
         isDragging = true;
+        hasDragged = false; // Reset on new mousedown
+        startPos.x = e.clientX;
+        startPos.y = e.clientY;
         offsetX = e.clientX - element.getBoundingClientRect().left;
         offsetY = e.clientY - element.getBoundingClientRect().top;
         element.style.cursor = 'grabbing';
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
+        // Add a capture-phase click listener to intercept the click before Tweakpane does.
+        element.addEventListener('click', onClickCapture, { capture: true });
       }
     };
 
     const onMouseMove = (e) => {
       if (!isDragging) return;
+
+      // Check if the mouse has moved beyond the threshold
+      if (!hasDragged) {
+        const dx = e.clientX - startPos.x;
+        const dy = e.clientY - startPos.y;
+        if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
+          hasDragged = true;
+        }
+      }
 
       const parentRect = msh3js._appContainer.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
@@ -3390,19 +3438,28 @@ const msh3js = {
       // Calculate the new position, clamped within the parent container's bounds.
       let newLeft = e.clientX - offsetX;
       let newTop = e.clientY - offsetY;
-
       element.style.left = `${Math.max(0, Math.min(newLeft, parentRect.width - elementRect.width))}px`;
       element.style.top = `${Math.max(0, Math.min(newTop, parentRect.height - elementRect.height))}px`;
     };
 
     const onMouseUp = () => {
       isDragging = false;
-      element.style.cursor = 'grab';
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      // The capture listener will handle the click, so we just need to clean up here.
+      element.style.cursor = 'grab';
     };
 
     element.addEventListener('mousedown', onMouseDown);
+
+    const onClickCapture = (e) => {
+      // If a drag occurred, stop the click event from reaching Tweakpane.
+      if (hasDragged) {
+        e.stopPropagation();
+      }
+      // This listener should only run once per mousedown, so remove it immediately.
+      element.removeEventListener('click', onClickCapture, { capture: true });
+    };
   },
 };
 
