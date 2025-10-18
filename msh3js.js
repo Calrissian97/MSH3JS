@@ -1535,7 +1535,8 @@ const msh3js = {
       if ((lowerName.endsWith(".msh") || lowerName.endsWith(".tga") || lowerName.endsWith(".msh.option")) && msh3js._files[lowerName] == null) {
         msh3js._files[lowerName] = {
           file: file,
-          url: URL.createObjectURL(file)
+          url: URL.createObjectURL(file),
+          processed: false, // Flag to track if the file has been processed
         };
       }
     }
@@ -1549,7 +1550,9 @@ const msh3js = {
     // Check for msh files and add them
     let fileProcessed = false;
     const mshFilesToProcess = [];
-    for (const fileObj of Object.values(msh3js._files)) {
+    // Only process files that have not been processed yet
+    const filesToProcess = Object.values(msh3js._files).filter(f => !f.processed);
+    for (const fileObj of filesToProcess) {
       if (fileObj.file.name.toLowerCase().endsWith(".msh")) {
         // Load msh file with MSHLoader
         const mshScene = await msh3js.three.mshLoader.loadAsync(fileObj.url);
@@ -1577,6 +1580,52 @@ const msh3js = {
         // Add msh to Three scene
         msh3js.three.scene.add(mshScene);
         fileProcessed = true;
+        fileObj.processed = true; // Mark as processed
+      }
+
+      // After loading, check for hardpoint attachments
+      for (const newMshData of mshFilesToProcess) {
+        const newMshScene = newMshData.group;
+        const hpActive = newMshScene.getObjectByName('hp_active');
+
+        if (hpActive) {
+          if (msh3js.debug) console.log(`processFiles::Found "hp_active" in ${newMshData.fileName}`);
+
+          // Search for 'hp_weapons' in all other loaded meshes
+          let hpWeapons = null;
+          let parentMshGroup = null;
+
+          for (const existingMsh of msh3js.three.msh) {
+            if (existingMsh.group === newMshScene) continue; // Don't check against itself
+
+            const foundHpWeapons = existingMsh.group.getObjectByName('hp_weapons');
+            if (foundHpWeapons) {
+              hpWeapons = foundHpWeapons;
+              parentMshGroup = existingMsh.group;
+              break; // Found it, stop searching
+            }
+          }
+
+          if (hpWeapons) {
+            if (msh3js.debug) console.log(`processFiles::Found "hp_weapons" in ${parentMshGroup.name}. Attaching ${newMshData.fileName}.`);
+
+            // Ensure world matrices are up-to-date before calculations
+            msh3js.three.scene.updateMatrixWorld(true);
+
+            // Get the world matrices of the hardpoints
+            const hpWeaponsMatrix = hpWeapons.matrixWorld.clone();
+            const hpActiveMatrix = hpActive.matrixWorld.clone();
+
+            // Calculate the transformation to align hp_active to hp_weapons
+            // M = T_weapon * T_active_inverse
+            const alignMatrix = new THREE.Matrix4().multiplyMatrices(hpWeaponsMatrix, hpActiveMatrix.invert());
+
+            // Apply this alignment to the new mesh's current world matrix
+            newMshScene.matrix.premultiply(alignMatrix);
+            newMshScene.matrix.decompose(newMshScene.position, newMshScene.quaternion, newMshScene.scale);
+            hpWeapons.attach(newMshScene);
+          }
+        }
       }
 
       // After adding the scene, traverse it to find a SkinnedMesh and create a SkeletonHelper
@@ -1643,7 +1692,8 @@ const msh3js = {
       }
     }
     // Check for textures and assign them to Three materials if required
-    for (const fileObj of Object.values(msh3js._files)) {
+    // Iterate over all files for texture assignment, as textures might be needed by newly added models
+    for (const fileObj of Object.values(msh3js._files)) { 
       if (fileObj.file.name.toLowerCase().endsWith(".tga")) {
         // Check if the texture is required by any of the loaded MSH files.
         let required = false;
@@ -1654,6 +1704,9 @@ const msh3js = {
           }
         }
         if (required) {
+            // If the texture has already been processed, skip reloading it.
+            if (fileObj.processed) continue;
+
             // Load tga file with TGALoader
             console.log("msh3js::processFiles::Loading texture:", fileObj.file.name);
             let material = null; // Hoist material to be accessible in catch block
@@ -1918,6 +1971,7 @@ const msh3js = {
             } catch (error) {
               console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
             }
+            fileObj.processed = true; // Mark as processed
             fileProcessed = true;
         } else if (msh3js.three.msh.length > 0) {
           // If MSH files have been loaded and this texture is not required by any of them, discard it.

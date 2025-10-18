@@ -241,11 +241,22 @@ export class MSHLoader extends THREE.Loader {
                 continue; // Skip to the next model
             }
 
+            // If the model is a hardpoint, create it as an Object3D and ignore its geometry.
+            if (model.name.toLowerCase().startsWith("hp")) {
+                const hardpoint = new THREE.Object3D();
+                hardpoint.name = model.name;
+                model.three = hardpoint;
+                hardpoint.position.set(model.modl.tran.translation[0], model.modl.tran.translation[1], model.modl.tran.translation[2]);
+                hardpoint.quaternion.set(model.modl.tran.rotation[0], model.modl.tran.rotation[1], model.modl.tran.rotation[2], model.modl.tran.rotation[3]);
+                modelsMap.set(model.name.toLowerCase(), model);
+                continue; // Skip to the next model
+            }
+
             // Infer visibility based on Pandemic Studios' naming conventions.
             if (model.name.toLowerCase().startsWith("sv_") || model.name.toLowerCase().startsWith("shadowvolume") || model.name.toLowerCase().endsWith("shadowvolume") ||
                 model.name.toLowerCase().startsWith("collision") || model.name.toLowerCase().endsWith("collision") || model.name.toLowerCase().startsWith("p_") ||
                 model.name.toLowerCase().endsWith("_lowrez") || model.name.toLowerCase().endsWith("_lowres") || model.name.toLowerCase().endsWith("_lod2") ||
-                model.name.toLowerCase().endsWith("_lod3") || model.name.toLowerCase().startsWith("c_") || model.name.toLowerCase().startsWith("hp"))
+                model.name.toLowerCase().endsWith("_lod3") || model.name.toLowerCase().startsWith("c_"))
                 model.modl.flgs = 1;
             // Otherwise override flgs and assign it the visible value (0).
             else
