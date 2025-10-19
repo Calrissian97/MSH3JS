@@ -6,7 +6,6 @@ const URLS_TO_CACHE = [
   "./msh3js.js",
   "./MSHLoader.js",
   "./ViewHelper.js",
-  "./fonts/Aurebesh.ttf",
   "https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.module.min.js",
   "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/controls/OrbitControls.js",
   "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/TGALoader.js",
@@ -140,3 +139,4 @@ self.addEventListener("message", (event) => {
     );
   }
 });
+
