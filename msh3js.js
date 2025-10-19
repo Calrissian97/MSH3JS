@@ -245,7 +245,7 @@ const msh3js = {
     // Register service worker to serve app content
     if ("serviceWorker" in navigator) {
       try {
-        const registration = await navigator.serviceWorker.register("/sw.js");
+        const registration = await navigator.serviceWorker.register("./sw.js");
         msh3js._serviceWorker = registration.active;
         msh3js._supportedFeatures._serviceWorker = true;
         if (msh3js.debug) console.log("initApp::Service Worker registered with scope:",
