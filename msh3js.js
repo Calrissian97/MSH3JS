@@ -289,14 +289,12 @@ const msh3js = {
       console.log("initApp::Supported features:", msh3js._supportedFeatures);
 
     // Get launch files (if any)
-    //if (await msh3js.getLaunchFiles() === true) {
-    //msh3js.processFiles(msh3js._files);
-    //} else {
+    if (await msh3js.getLaunchFiles() === true) {
+      await msh3js.processFiles(msh3js._files);
+    }
     // Create file input and display splashscreen
     msh3js.createFileInput();
-    // -deprecated- msh3js.createSplashScreen();
     msh3js.manageListeners("add", "fileDropCanvas");
-    // }
     msh3js.manageListeners("add", "resize");
     if (msh3js.debug) console.log("initApp::msh3js initialized", msh3js);
     // Return app object
@@ -2089,30 +2087,39 @@ const msh3js = {
 
   // Get launch fileHandles from launchQueue and populate msh3js.files
   async getLaunchFiles() {
-    return new Promise((resolve) => {
-      if ('launchQueue' in window) {
-        window.launchQueue.setConsumer(async (launchParams) => {
-          if (launchParams.files.length > 0) {
-            const files = [];
-            for (const fileHandle of launchParams.files) {
-              try {
-                const file = await fileHandle.getFile();
-                if (msh3js.debug) console.log("getLaunchFiles::File", file.name, "loaded:", file);
-                files.push(file);
-              } catch (e) {
-                console.error("getLaunchFiles::Error loading file:", e);
-              }
-            }
-            msh3js.addFiles(files);
-            resolve(true);
+    if (!window.launchQueue) {
+      if (msh3js.debug) console.log("getLaunchFiles::launchQueue API not supported.");
+      return Promise.resolve(false);
+    }
+
+    return new Promise(resolve => {
+      let promiseResolved = false;
+
+      // Set a small timeout to resolve the promise if no files are launched.
+      // This prevents the app from hanging on a normal launch.
+      setTimeout(() => {
+        if (!promiseResolved) {
+          if (msh3js.debug) console.log("getLaunchFiles::No launch files detected within timeout.");
+          promiseResolved = true;
+          resolve(false);
+        }
+      }, 250); // A short delay is enough to catch a file-based launch.
+
+      window.launchQueue.setConsumer(async (launchParams) => {
+        if (launchParams.files && launchParams.files.length > 0 && !promiseResolved) {
+          if (msh3js.debug) console.log("getLaunchFiles::App launched with files:", launchParams.files);
+          promiseResolved = true;
+
+          const files = [];
+          for (const fileHandle of launchParams.files) {
+            files.push(await fileHandle.getFile());
           }
-          else {
-            resolve(false);
-          }
-        });
-      } else {
-        resolve(false);
-      }
+          msh3js.addFiles(files);
+
+          // Resolve with true, indicating files were processed on launch.
+          resolve(true);
+        }
+      });
     });
   },
 

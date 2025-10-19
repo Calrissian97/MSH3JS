@@ -1,11 +1,9 @@
-const CACHE_NAME = "offlineCache-v2"; // Increment version to trigger update
+const CACHE_NAME = "offlineCache-v1"; // Increment version to trigger update
 const URLS_TO_CACHE = [
-  "./sw.js",
   "./manifest.json",
   "./package.json",
   "./index.html",
   "./msh3js.js",
-  "./msh3js.umd.js",
   "./MSHLoader.js",
   "./ViewHelper.js",
   "./fonts/Aurebesh.ttf",
@@ -18,7 +16,7 @@ const URLS_TO_CACHE = [
   "https://cdn.jsdelivr.net/npm/tweakpane/dist/tweakpane.min.js",
   "https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.min.js",
   "https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js",
-  "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.6.8/build/index.module.js",
+  "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.6.8/build/index.module.min.js",
   "./android-chrome-192x192.png",
   "./android-chrome-512x512.png",
   "./favicon-16x16.png",
@@ -32,10 +30,21 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
-      console.log("Service Worker: Caching app shell...");
-      // Use addAll for atomic caching. If one file fails, the whole install fails.
-      // This prevents a partially cached, broken state.
-      await cache.addAll(URLS_TO_CACHE);
+      console.log("Service Worker: Caching app shell files...");
+
+      // We'll cache files individually to log which one fails.
+      for (const url of URLS_TO_CACHE) {
+        try {
+          // Note: cache.add() is equivalent to fetch() + cache.put().
+          await cache.add(url);
+        } catch (error) {
+          // Log the specific URL that failed.
+          console.error(`Service Worker: Failed to cache URL: ${url}`, error);
+          // Re-throw the error to ensure the service worker installation fails,
+          // as it would with cache.addAll().
+          throw error;
+        }
+      }
       self.skipWaiting();
     })()
   );

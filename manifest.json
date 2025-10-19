@@ -29,22 +29,22 @@
       "type": "image/png"
     }
   ],
-  "file_handlers": [
-    {
-      "action": "/",
-      "accept": {
-        "application/octet-stream": [
-          ".msh"
-        ]
-      }
-    }
-  ],
   "screenshots": [
     {
       "src": "android-chrome-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "label": "Star Wars Battlefront .msh Three.js model viewer (Max 8 screenshots)"
+      "label": "Star Wars Battlefront .msh Three.js model viewer"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "./index.html",
+      "accept": {
+        "application/octet-stream": [".msh", ".msh.option"],
+        "image/tga": [".tga"]
+      },
+      "launch_type": "single-client"
     }
   ]
 }
