@@ -349,6 +349,9 @@ const msh3js = {
 
     // Make the container draggable
     msh3js.makeDraggable(msh3js._tweakpaneContainer);
+    // Make the container resizable
+    msh3js.makeResizable(msh3js._tweakpaneContainer);
+
 
     _appContainer.appendChild(msh3js._tweakpaneContainer);
     // Either get canvas from param or from HTML or create a new one and append it to the container
@@ -1975,13 +1978,6 @@ const msh3js = {
         }
       }
     }
-    // Cleanup URLs after loading is complete
-    /*
-    for (const fileObj of Object.values(msh3js._files)) {
-      URL.revokeObjectURL(fileObj.url);
-      fileObj.url = null;
-    }
-    */
 
     // Populate msh3js.ui elements w/msh data
     for (let material of msh3js.three.msh.at(-1).materials)
@@ -2053,6 +2049,13 @@ const msh3js = {
     // Reconstruct Tweakpane pane if already present
     if (msh3js.pane != null) await msh3js.initTweakpane(true);
     if (msh3js.debug) console.log("processFiles::Files processed:", msh3js._files);
+
+    // Cleanup URLs after loading is complete
+    for (const fileObj of Object.values(msh3js._files)) {
+      URL.revokeObjectURL(fileObj.url);
+      fileObj.url = null;
+    }
+    
     // Return true if at least one file was processed
     return fileProcessed;
   },
@@ -3518,6 +3521,58 @@ const msh3js = {
       // This listener should only run once per mousedown, so remove it immediately.
       element.removeEventListener('click', onClickCapture, { capture: true });
     };
+  },
+  // Makes an HTML element resizable from its right edge.
+  makeResizable(element) {
+    let isResizing = false;
+    const resizeHandleSize = 10; // The "hot" area for grabbing the edge
+
+    const onMouseDown = (e) => {
+      const rect = element.getBoundingClientRect();
+      const onRightEdge = e.clientX >= rect.right - resizeHandleSize && e.clientX <= rect.right;
+
+      if (onRightEdge) {
+        isResizing = true;
+        e.preventDefault();
+        e.stopPropagation();
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      }
+    };
+ 
+    const onMouseMove = (e) => {
+      if (!isResizing) return;
+ 
+      const rect = element.getBoundingClientRect();
+ 
+      const newWidth = e.clientX - rect.left;
+      element.style.width = `${Math.max(200, newWidth)}px`; // Set a minimum width
+    };
+ 
+    const onMouseUp = () => {
+      isResizing = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      // Reset cursor in case the mouse is released outside the element
+      element.style.cursor = '';
+    };
+ 
+    const onElementMouseMove = (e) => {
+      if (isResizing) return; // Don't change cursor while actively resizing
+ 
+      const rect = element.getBoundingClientRect();
+      const onRightEdge = e.clientX >= rect.right - resizeHandleSize && e.clientX <= rect.right;
+ 
+      if (onRightEdge) {
+        element.style.cursor = 'ew-resize';
+      } else {
+        // Reset to default cursor if not on an edge
+        element.style.cursor = '';
+      }
+    };
+ 
+    element.addEventListener('mousedown', onMouseDown);
+    element.addEventListener('mousemove', onElementMouseMove);
   },
 };
 
