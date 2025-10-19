@@ -3481,33 +3481,23 @@ const msh3js = {
     const onMouseMove = (e) => {
       if (!isDragging) return;
 
+      // Check if the mouse has moved beyond the threshold
       if (!hasDragged) {
         const dx = e.clientX - startPos.x;
         const dy = e.clientY - startPos.y;
-        if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) hasDragged = true;
+        if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
+          hasDragged = true;
+        }
       }
 
       const parentRect = msh3js._appContainer.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
 
-      // Parent-relative coordinates
-      const parentLeft = parentRect.left;
-      const parentTop = parentRect.top;
-      const parentWidth = parentRect.width;
-      const parentHeight = parentRect.height;
-
-      // Calculate new left/top relative to parent
-      let newLeft = e.clientX - offsetX - parentLeft;
-      let newTop = e.clientY - offsetY - parentTop;
-
-      // Clamp within parent
-      newLeft = Math.max(0, Math.min(newLeft, parentWidth - elementRect.width));
-      newTop = Math.max(0, Math.min(newTop, parentHeight - elementRect.height));
-
-      // Remove any right value and set left/top explicitly
-      element.style.removeProperty('right');
-      element.style.left = `${newLeft}px`;
-      element.style.top = `${newTop}px`;
+      // Calculate the new position, clamped within the parent container's bounds.
+      let newLeft = e.clientX - offsetX;
+      let newTop = e.clientY - offsetY;
+      element.style.left = `${Math.max(0, Math.min(newLeft, parentRect.width - elementRect.width))}px`;
+      element.style.top = `${Math.max(0, Math.min(newTop, parentRect.height - elementRect.height))}px`;
     };
 
     const onMouseUp = () => {
