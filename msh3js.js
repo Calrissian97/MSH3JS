@@ -1141,7 +1141,7 @@ const msh3js = {
 
     // Add toggle for showing the skeleton
     // Doesn't work correctly
-    
+
     animationsFolder.addBinding(msh3js.options, 'showSkeleton', {
       label: 'Show Skeleton'
     }).on('change', (ev) => {
@@ -1149,7 +1149,7 @@ const msh3js = {
       if (msh3js.three.skeletonHelper)
         msh3js.three.skeletonHelper.visible = ev.value;
     });
-    
+
 
     // Add slider to adjust playback speed
     animationsPlaybackFolder.addBinding(msh3js.ui, "animationPlaying", {
@@ -1691,7 +1691,7 @@ const msh3js = {
     }
     // Check for textures and assign them to Three materials if required
     // Iterate over all files for texture assignment, as textures might be needed by newly added models
-    for (const fileObj of Object.values(msh3js._files)) { 
+    for (const fileObj of Object.values(msh3js._files)) {
       if (fileObj.file.name.toLowerCase().endsWith(".tga")) {
         // Check if the texture is required by any of the loaded MSH files.
         let required = false;
@@ -1702,26 +1702,26 @@ const msh3js = {
           }
         }
         if (required) {
-            // If the texture has already been processed, skip reloading it.
-            if (fileObj.processed) continue;
+          // If the texture has already been processed, skip reloading it.
+          if (fileObj.processed) continue;
 
-            // Load tga file with TGALoader
-            console.log("msh3js::processFiles::Loading texture:", fileObj.file.name);
-            let material = null; // Hoist material to be accessible in catch block
-            try {
-              const ThreeTexture = await msh3js.three.tgaLoader.loadAsync(fileObj.url);
-              ThreeTexture.name = fileObj.file.name;
-              ThreeTexture.colorSpace = THREE.SRGBColorSpace;
-              ThreeTexture.wrapS = THREE.RepeatWrapping;
-              ThreeTexture.wrapT = THREE.RepeatWrapping;
-              ThreeTexture.flipY = true;
+          // Load tga file with TGALoader
+          console.log("msh3js::processFiles::Loading texture:", fileObj.file.name);
+          let material = null; // Hoist material to be accessible in catch block
+          try {
+            const ThreeTexture = await msh3js.three.tgaLoader.loadAsync(fileObj.url);
+            ThreeTexture.name = fileObj.file.name;
+            ThreeTexture.colorSpace = THREE.SRGBColorSpace;
+            ThreeTexture.wrapS = THREE.RepeatWrapping;
+            ThreeTexture.wrapT = THREE.RepeatWrapping;
+            ThreeTexture.flipY = true;
 
-              // Assign texture to all materials in all MSH files that require it.
-              for (const msh of msh3js.three.msh) {
-                if (!msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) continue;
+            // Assign texture to all materials in all MSH files that require it.
+            for (const msh of msh3js.three.msh) {
+              if (!msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) continue;
 
-                msh.textures.push(ThreeTexture);
-                for (material of msh.materials) {
+              msh.textures.push(ThreeTexture);
+              for (material of msh.materials) {
                 if (material.texture != undefined) {
                   // Handle generated cloth material
                   if (material.texture.toLowerCase() === fileObj.file.name.toLowerCase()) {
@@ -1965,12 +1965,12 @@ const msh3js = {
                   }
                 }
               }
-              }
-            } catch (error) {
-              console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
             }
-            fileObj.processed = true; // Mark as processed
-            fileProcessed = true;
+          } catch (error) {
+            console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
+          }
+          fileObj.processed = true; // Mark as processed
+          fileProcessed = true;
         } else if (msh3js.three.msh.length > 0) {
           // If MSH files have been loaded and this texture is not required by any of them, discard it.
           if (msh3js.debug) console.log(`processFiles::Discarding unrequired texture: ${fileObj.file.name}`);
@@ -2055,7 +2055,7 @@ const msh3js = {
       URL.revokeObjectURL(fileObj.url);
       fileObj.url = null;
     }
-    
+
     // Return true if at least one file was processed
     return fileProcessed;
   },
@@ -3050,7 +3050,7 @@ const msh3js = {
             // Add these new animation clips to every currently loaded MSH group.
             // This assumes the skeleton is compatible.
             for (const msh of msh3js.three.msh) {
-              for (const sourceClip of animScene.animations) {                
+              for (const sourceClip of animScene.animations) {
                 // Prepend the source MSH filename to the animation name to ensure uniqueness.
                 // e.g., "run.msh" with clip "anim" becomes "run_anim".
                 const sourceFileName = file.name.replace(/\.msh$/i, '');
@@ -3064,9 +3064,9 @@ const msh3js = {
                     const boneName = track.name.split('.')[0];
                     return existingBoneNames.has(boneName);
                   });
-                  
+
                   if (msh3js.debug) console.log(`importAnimations::Clip "${sourceClip.name}" renamed to "${newAnimationName}" and filtered from ${sourceClip.tracks.length} to ${filteredTracks.length} tracks.`);
-                  
+
                   const newClip = new THREE.AnimationClip(newAnimationName, sourceClip.duration, filteredTracks);
                   msh.group.animations.push(newClip);
                   msh.animations.push({ name: newAnimationName }); // Also update our internal list
@@ -3484,28 +3484,33 @@ const msh3js = {
     const onMouseMove = (e) => {
       if (!isDragging) return;
 
-      // Check if the mouse has moved beyond the threshold
       if (!hasDragged) {
         const dx = e.clientX - startPos.x;
         const dy = e.clientY - startPos.y;
-        if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
-          hasDragged = true;
-        }
+        if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) hasDragged = true;
       }
 
       const parentRect = msh3js._appContainer.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
 
-      // Calculate the new top and right positions.
-      let newTop = e.clientY - offsetY;
-      let newRight = parentRect.right - (e.clientX - offsetX + elementRect.width);
+      // Parent-relative coordinates
+      const parentLeft = parentRect.left;
+      const parentTop = parentRect.top;
+      const parentWidth = parentRect.width;
+      const parentHeight = parentRect.height;
 
-      // We need to nullify the 'left' property that might have been set by mistake in previous versions.
-      element.style.left = null;
+      // Calculate new left/top relative to parent
+      let newLeft = e.clientX - offsetX - parentLeft;
+      let newTop = e.clientY - offsetY - parentTop;
 
-      // Clamp the position within the parent container's bounds.
-      element.style.right = `${Math.max(0, Math.min(newRight, parentRect.width - elementRect.width))}px`;
-      element.style.top = `${Math.max(0, Math.min(newTop, parentRect.height - elementRect.height))}px`;
+      // Clamp within parent
+      newLeft = Math.max(0, Math.min(newLeft, parentWidth - elementRect.width));
+      newTop = Math.max(0, Math.min(newTop, parentHeight - elementRect.height));
+
+      // Remove any right value and set left/top explicitly
+      element.style.removeProperty('right');
+      element.style.left = `${newLeft}px`;
+      element.style.top = `${newTop}px`;
     };
 
     const onMouseUp = () => {
@@ -3544,16 +3549,16 @@ const msh3js = {
         document.addEventListener('mouseup', onMouseUp);
       }
     };
- 
+
     const onMouseMove = (e) => {
       if (!isResizing) return;
- 
+
       const rect = element.getBoundingClientRect();
- 
+
       const newWidth = e.clientX - rect.left;
       element.style.width = `${Math.max(200, newWidth)}px`; // Set a minimum width
     };
- 
+
     const onMouseUp = () => {
       isResizing = false;
       document.removeEventListener('mousemove', onMouseMove);
@@ -3561,13 +3566,13 @@ const msh3js = {
       // Reset cursor in case the mouse is released outside the element
       element.style.cursor = '';
     };
- 
+
     const onElementMouseMove = (e) => {
       if (isResizing) return; // Don't change cursor while actively resizing
- 
+
       const rect = element.getBoundingClientRect();
       const onRightEdge = e.clientX >= rect.right - resizeHandleSize && e.clientX <= rect.right;
- 
+
       if (onRightEdge) {
         element.style.cursor = 'ew-resize';
       } else {
@@ -3575,7 +3580,7 @@ const msh3js = {
         element.style.cursor = '';
       }
     };
- 
+
     element.addEventListener('mousedown', onMouseDown);
     element.addEventListener('mousemove', onElementMouseMove);
   },
