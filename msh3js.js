@@ -3493,11 +3493,13 @@ const msh3js = {
       const parentRect = msh3js._appContainer.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
 
-      // Calculate the new position, clamped within the parent container's bounds.
-      let newLeft = e.clientX - offsetX;
-      let newTop = e.clientY - offsetY;
-      element.style.left = `${Math.max(0, Math.min(newLeft, parentRect.width - elementRect.width))}px`;
-      element.style.top = `${Math.max(0, Math.min(newTop, parentRect.height - elementRect.height))}px`;
+      // Calculate the new position relative to the viewport
+      const newLeft = e.clientX - offsetX;
+      const newTop = e.clientY - offsetY;
+
+      // Clamp the position within the parent container's bounds, accounting for the parent's position.
+      element.style.left = `${Math.max(parentRect.left, Math.min(newLeft, parentRect.right - elementRect.width)) - parentRect.left}px`;
+      element.style.top = `${Math.max(parentRect.top, Math.min(newTop, parentRect.bottom - elementRect.height)) - parentRect.top}px`;
     };
 
     const onMouseUp = () => {
