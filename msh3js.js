@@ -1138,7 +1138,7 @@ const msh3js = {
 
     // Add toggle for showing the skeleton
     // Doesn't work correctly
-    /*
+    
     animationsFolder.addBinding(msh3js.options, 'showSkeleton', {
       label: 'Show Skeleton'
     }).on('change', (ev) => {
@@ -1146,7 +1146,7 @@ const msh3js = {
       if (msh3js.three.skeletonHelper)
         msh3js.three.skeletonHelper.visible = ev.value;
     });
-    */
+    
 
     // Add slider to adjust playback speed
     animationsPlaybackFolder.addBinding(msh3js.ui, "animationPlaying", {
@@ -1628,23 +1628,20 @@ const msh3js = {
 
       // After adding the scene, traverse it to find a SkinnedMesh and create a SkeletonHelper
       if (mshFilesToProcess.length > 0) {
-        // Dispose of the old helper if it exists
-        if (msh3js.three.skeletonHelper) {
-          msh3js.three.scene.remove(msh3js.three.skeletonHelper);
-          msh3js.three.skeletonHelper.dispose();
-          msh3js.three.skeletonHelper = null;
+        for (const msh of msh3js.three.msh) {
+          if (msh3js.three.skeletonHelper) break; // A helper already exists.
+          msh.group.traverse((child) => {
+            // Create one helper for the first SkinnedMesh found
+            if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
+              msh3js.three.scene.updateMatrixWorld(true);
+              const helper = new THREE.SkeletonHelper(child);
+              helper.name = "skeletonHelper";
+              helper.visible = msh3js.options.showSkeleton;
+              msh3js.three.scene.add(helper);
+              msh3js.three.skeletonHelper = helper;
+            }
+          });
         }
-        mshFilesToProcess.at(-1).group.traverse((child) => {
-          // Create one helper for the first SkinnedMesh found
-          if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
-            msh3js.three.scene.updateMatrixWorld(true);
-            const helper = new THREE.SkeletonHelper(child);
-            helper.name = "skeletonHelper";
-            helper.visible = msh3js.options.showSkeleton;
-            msh3js.three.scene.add(helper);
-            msh3js.three.skeletonHelper = helper;
-          }
-        });
       }
     }
 

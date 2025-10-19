@@ -147,8 +147,10 @@ export class MSHLoader extends THREE.Loader {
 
         // Prioritize finding bones from skinning data (ENVL chunks) as it's the most reliable source.
         for (const model of this.models) {
-            if (model.name.toLowerCase().startsWith("bone")) {
-                boneNames.add(model.name);
+            const modelNameLower = model.name.toLowerCase();
+            // Treat any model starting with "bone", "root", or "eff" as part of the skeleton.
+            if (modelNameLower.startsWith("bone") || modelNameLower.startsWith("root") || modelNameLower.startsWith("eff")) {
+                boneNames.add(model.name.toLowerCase());
                 continue;
             }
             const boneMndxArray = model.modl.geom?.envelope?.indices;
@@ -229,7 +231,7 @@ export class MSHLoader extends THREE.Loader {
         // Iterate through all the raw model data.
         for (let model of this.models) {
             // If this model's name was found in boneNames, create as a bone.
-            if (boneNames.has(model.name)) {
+            if (boneNames.has(model.name.toLowerCase())) {
                 const bone = new THREE.Bone();
                 bone.name = model.name;
                 model.three = bone;
@@ -556,6 +558,7 @@ export class MSHLoader extends THREE.Loader {
             scene.updateMatrixWorld(true); // Matrix MUST be updated before creating skelly
             // Create a single skeleton from the flat list of all bones. The hierarchy is already set up.
             const skeleton = new THREE.Skeleton(allBones);
+            skeleton.calculateInverses();
             if (this.debug) console.log("parse::Skeleton created:", skeleton);
 
             // Create a map from a bone's model index (mndx) to its final index in the skeleton.
