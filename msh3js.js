@@ -3496,10 +3496,15 @@ const msh3js = {
       const parentRect = msh3js._appContainer.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
 
-      // Calculate the new position, clamped within the parent container's bounds.
-      let newLeft = e.clientX - offsetX;
+      // Calculate the new top and right positions.
       let newTop = e.clientY - offsetY;
-      element.style.left = `${Math.max(0, Math.min(newLeft, parentRect.width - elementRect.width))}px`;
+      let newRight = parentRect.right - (e.clientX - offsetX + elementRect.width);
+
+      // We need to nullify the 'left' property that might have been set by mistake in previous versions.
+      element.style.left = null;
+
+      // Clamp the position within the parent container's bounds.
+      element.style.right = `${Math.max(0, Math.min(newRight, parentRect.width - elementRect.width))}px`;
       element.style.top = `${Math.max(0, Math.min(newTop, parentRect.height - elementRect.height))}px`;
     };
 
