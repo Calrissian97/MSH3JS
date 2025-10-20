@@ -704,10 +704,6 @@ const msh3js = {
         const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: true });
         // List all assigned textures, add missing textures to the array
         for (const [label, textureName] of Object.entries(textureSlots)) {
-          const lowerCaseTextureName = textureName.toLowerCase();
-          const existingFile = msh3js._files[lowerCaseTextureName];
-          if (!existingFile)
-            msh3js.ui.missingTextures.push(lowerCaseTextureName);
           if (textureName !== 'Unassigned') {
             // Create a text input to display the filename.
             const textureControl = texturesFolder.addBinding(textureSlots, label, {
@@ -718,7 +714,17 @@ const msh3js = {
         }
       }
     }
-    mshTab.addBlade({ view: "separator" });
+
+    // Missing Textures Folder: Display textures that are required but not yet loaded.
+    if (msh3js.ui.missingTextures.length > 0) {
+      const missingTexturesFolder = mshTab.addFolder({ title: "Missing Textures", expanded: true });
+      missingTexturesFolder.addBlade({ view: 'separator' });
+      // Add a read-only text field for each missing texture.
+      msh3js.ui.missingTextures.forEach((textureName, index) => {
+        const dummy = { file: textureName };
+        missingTexturesFolder.addBinding(dummy, 'file', { readonly: true, label: `File ${index + 1}` });
+      });
+    }
 
     // Rendering options Folder on the "App" tab.
     const renderingFolder = appSettingsTab.addFolder({ title: "Rendering" });
@@ -1998,13 +2004,13 @@ const msh3js = {
     msh3js.ui.mshSize = msh3js.three.msh.at(-1).fileSize;
     msh3js.ui.mshLastModified = new Date(msh3js.three.msh.at(-1).lastModified).toLocaleString();
     msh3js.ui.sceneName = msh3js.three.msh.at(-1).sceneInfo.name;
-    // Reset missing textures array
-    msh3js.ui.missingTextures = [];
+
+    // Re-calculate the list of all missing textures from scratch
     const missingTextureNames = new Set();
-    // Check for missing textures
     for (const msh of msh3js.three.msh) {
       for (const requiredTexture of msh.requiredTextures) {
         const texture = requiredTexture.toLowerCase();
+        // Check against the master list of provided files (_files)
         const textureFound = msh3js._files.hasOwnProperty(texture);
         if (!textureFound) missingTextureNames.add(texture);
       }
