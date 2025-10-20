@@ -349,6 +349,7 @@ const msh3js = {
 
     // Make the container draggable
     msh3js.makeDraggable(msh3js._tweakpaneContainer);
+    msh3js.makeResizable(msh3js._tweakpaneContainer);
 
     _appContainer.appendChild(msh3js._tweakpaneContainer);
     // Either get canvas from param or from HTML or create a new one and append it to the container
@@ -3520,6 +3521,72 @@ const msh3js = {
       // This listener should only run once per mousedown, so remove it immediately.
       element.removeEventListener('click', onClickCapture, { capture: true });
     };
+  },
+
+  // Makes an HTML element resizable from its right edge.
+  makeResizable(element) {
+    const minWidth = 240;
+    const handleWidth = 8; // Increased handle area for easier grabbing
+ 
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+ 
+    // This function checks the mouse position and changes the cursor.
+    const onMouseMoveCursor = (e) => {
+      if (isResizing) return; // Don't change cursor while actively resizing
+ 
+      const rect = element.getBoundingClientRect();
+      // Check if the mouse is over the right edge.
+      // We use clientX and rect.right for viewport-relative coordinates.
+      if (e.clientX >= rect.right - handleWidth && e.clientX <= rect.right) {
+        element.style.cursor = 'ew-resize';
+      } else {
+        // Reset to default cursor if not over the handle.
+        // 'grab' is used by the draggable function.
+        element.style.cursor = 'grab';
+      }
+    };
+ 
+    const onMouseDown = (e) => {
+      // Only start resizing if the cursor is the resize cursor.
+      if (element.style.cursor === 'ew-resize') {
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = element.offsetWidth;
+ 
+        // Prevent text selection and other default behaviors during resize.
+        e.preventDefault();
+        e.stopPropagation();
+ 
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      }
+    };
+ 
+    const onMouseMove = (e) => {
+      if (!isResizing) return;
+ 
+      const dx = e.clientX - startX;
+      let newWidth = startWidth + dx;
+ 
+      // Enforce minimum width
+      newWidth = Math.max(minWidth, newWidth);
+ 
+      element.style.width = `${newWidth}px`;
+    };
+ 
+    const onMouseUp = () => {
+      if (!isResizing) return;
+      isResizing = false;
+ 
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+ 
+    // Listen for mouse movement over the element to change the cursor.
+    element.addEventListener('mousemove', onMouseMoveCursor);
+    element.addEventListener('mousedown', onMouseDown);
   },
 };
 
