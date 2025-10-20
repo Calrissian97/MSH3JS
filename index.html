@@ -14,11 +14,14 @@
 
   <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
-  <link href="./fonts/Aurebesh.ttf" as="font" type="font/ttf" crossorigin="anonymous">
 
   <!-- Not much styling, just use inline -->
   <style>
+    @font-face {
+      font-family: 'Aurebesh';
+      src: url('./Aurebesh.ttf') format('truetype');
+    }
+
     html,
     body {
       margin: 0;
@@ -47,16 +50,8 @@
       margin: 0;
     }
 
-    @font-face {
-      font-family: "Aurebesh";
-      src: url("./fonts/Aurebesh.ttf") format("truetype");
-      font-weight: normal;
-      font-style: normal;
-      font-display: swap;
-    }
-
     :root {
-      --tp-font-family: "Orbitron", "Roboto", "Aurebesh";
+      --tp-font-family: sans-serif;
       --tp-base-background-color: hsla(0, 0%, 0%, 0.80);
       --tp-base-shadow-color: hsla(0, 0%, 0%, 0.2);
       --tp-button-background-color: hsla(0, 0%, 70%, 1.0);
@@ -79,6 +74,22 @@
       --tp-monitor-background-color: hsla(0, 0%, 8%, 0.90);
       --tp-monitor-foreground-color: hsla(0, 0%, 80%, 1.00);
     }
+
+    /* Force Orbitron font on Tweakpane elements */
+    #tweakpaneContainer {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1;
+      width: 256px;
+      /* Define a variable for the font, defaulting to Orbitron */
+      --tweakpane-font: "Orbitron";
+    }
+
+    #tweakpaneContainer * {
+      font-family: var(--tweakpane-font), sans-serif;
+    }
+
   </style>
 </head>
 

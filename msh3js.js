@@ -52,6 +52,7 @@ const msh3js = {
     clothSim: true, // Enable cloth simulation
     clothWindSpeed: 2.0, // Wind speed for cloth simulation
     clothWindDirection: 280.0, // Wind direction in degrees (0-360)
+    tweakpaneFont: "Orbitron", // Font for Tweakpane UI
   },
   // Three.JS objects
   three: {
@@ -340,12 +341,6 @@ const msh3js = {
     let _appContainer = document.getElementById("app") ?? document.getElementById("msh3js") ?? document.body;
     msh3js._tweakpaneContainer = document.getElementById("tweakpaneContainer") ?? document.createElement("div");
     msh3js._tweakpaneContainer.id = "tweakpaneContainer";
-    // Style the container to be positioned absolutely and on top.
-    msh3js._tweakpaneContainer.style.position = 'absolute';
-    msh3js._tweakpaneContainer.style.top = '10px';
-    msh3js._tweakpaneContainer.style.right = '10px';
-    msh3js._tweakpaneContainer.style.zIndex = '10'; // Ensure it's above the canvas
-    msh3js._tweakpaneContainer.style.width = '256px'; // Default Tweakpane width
 
     // Make the container draggable
     msh3js.makeDraggable(msh3js._tweakpaneContainer);
@@ -1064,10 +1059,25 @@ const msh3js = {
       expanded: true,
     });
 
+    // Dropdown to select the UI font.
+    preferencesFolder.addBinding(msh3js.options, 'tweakpaneFont', {
+      label: 'UI Font',
+      options: {
+        Orbitron: 'Orbitron',
+        Aurebesh: 'Aurebesh',
+        System: 'sans-serif',
+      },
+    }).on('change', (ev) => {
+      // Update the CSS variable on the container to change the font.
+      if (msh3js._tweakpaneContainer) {
+        msh3js._tweakpaneContainer.style.setProperty('--tweakpane-font', ev.value);
+      }
+    });
+
     // Button to save current app options to localStorage.
     const saveBtn = preferencesFolder.addButton({
       title: "Save",
-      label: "",
+      label: "Options",
     });
     saveBtn.on("click", () => {
       if (msh3js._supportedFeatures.localStorage === true) {
