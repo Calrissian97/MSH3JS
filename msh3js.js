@@ -3461,6 +3461,14 @@ const msh3js = {
     const startPos = { x: 0, y: 0 };
     const dragThreshold = 5; // Minimum pixels to move before it's a drag
 
+    // Set cursor to 'grab' on hover over the title bar
+    element.addEventListener('mouseover', (e) => {
+      const target = e.target;
+      if (target.classList.contains('tp-rotv_t')) {
+        target.style.cursor = 'grab';
+      }
+    });
+
     const onMouseDown = (e) => {
       // Only start dragging if the click is on the pane's title bar or a folder header
       const target = e.target;
@@ -3471,9 +3479,9 @@ const msh3js = {
         startPos.y = e.clientY;
         offsetX = e.clientX - element.getBoundingClientRect().left;
         offsetY = e.clientY - element.getBoundingClientRect().top;
-        element.style.cursor = 'grabbing';
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
+        target.style.cursor = 'grabbing'; // Set cursor to 'grabbing' while dragging
         // Add a capture-phase click listener to intercept the click before Tweakpane does.
         element.addEventListener('click', onClickCapture, { capture: true });
       }
@@ -3507,8 +3515,7 @@ const msh3js = {
       isDragging = false;
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
-      // The capture listener will handle the click, so we just need to clean up here.
-      element.style.cursor = 'grab';
+      document.body.style.cursor = ''; // Reset cursor on drag end
     };
 
     element.addEventListener('mousedown', onMouseDown);
@@ -3541,10 +3548,6 @@ const msh3js = {
       // We use clientX and rect.right for viewport-relative coordinates.
       if (e.clientX >= rect.right - handleWidth && e.clientX <= rect.right) {
         element.style.cursor = 'ew-resize';
-      } else {
-        // Reset to default cursor if not over the handle.
-        // 'grab' is used by the draggable function.
-        element.style.cursor = 'grab';
       }
     };
  
