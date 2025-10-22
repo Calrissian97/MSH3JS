@@ -52,7 +52,14 @@ const msh3js = {
     clothSim: true, // Enable cloth simulation
     clothWindSpeed: 2.0, // Wind speed for cloth simulation
     clothWindDirection: 280.0, // Wind direction in degrees (0-360)
+    renderingAPI: 'webgl2', // webgl, webgl2, or webgpu
     tweakpaneFont: "Orbitron", // Font for Tweakpane UI
+    AR: false, // Enable AR viewing
+    VR: false, // Enable VR viewing
+    bloomEnabled: false, // Enable bloom effect
+    bloomThreshold: 0.85, // Bloom threshold
+    bloomStrength: 0.5, // Bloom strength
+    bloomRadius: 0.3, // Bloom radius
   },
   // Three.JS objects
   three: {
@@ -144,6 +151,11 @@ const msh3js = {
   _appContainer: null,
   // (HTML div) container for tweakpane controls
   _tweakpaneContainer: null,
+  // Loading bar elements
+  _loadingBar: {
+    container: null,
+    spheres: [],
+  },
   // service worker
   _serviceWorker: null,
   // Dynamically Imported modules (ViewHelper, Stats, Tweakpane, webgl-lint)
@@ -199,6 +211,11 @@ const msh3js = {
     // Get canvas and canvas container
     msh3js.canvas = params.appCanvas;
     msh3js._appContainer = params._appContainer;
+
+    // Get loading bar elements
+    msh3js._loadingBar.container = document.getElementById("loading-container");
+    msh3js._loadingBar.spheres = document.querySelectorAll(".loading-sphere");
+
 
     // Process passed app options (Overrides options from localStorage if present)
     if (params.AA != null) msh3js.options.aa = params.AA;
@@ -558,13 +575,15 @@ const msh3js = {
         { title: "MSH" },
         { title: "Scene" },
         { title: "Anim" },
+        { title: "Three" },
         { title: "App" },
       ],
     });
     const mshTab = tab.pages[0];
     const controlsTab = tab.pages[1];
     const animationsTab = tab.pages[2];
-    const appSettingsTab = tab.pages[3];
+    const threeTab = tab.pages[3];
+    const appSettingsTab = tab.pages[4];
 
     // MSH Info Folder: Display read-only information about the loaded MSH file.
     const mshFileNameBinding = mshTab.addBinding(
@@ -717,6 +736,7 @@ const msh3js = {
 
     // Missing Textures Folder: Display textures that are required but not yet loaded.
     if (msh3js.ui.missingTextures.length > 0) {
+      mshTab.addBlade({ view: "separator" });
       const missingTexturesFolder = mshTab.addFolder({ title: "Missing Textures", expanded: true });
       missingTexturesFolder.addBlade({ view: 'separator' });
       // Add a read-only text field for each missing texture.
@@ -909,7 +929,7 @@ const msh3js = {
     // Background Folder for scene background color and image settings.
     const bgFolder = controlsTab.addFolder({
       title: "Background",
-      expanded: false,
+      expanded: true,
     });
     bgFolder
       .addBinding(msh3js.options, "backgroundColor", {
@@ -1034,7 +1054,56 @@ const msh3js = {
           );
       });
 
-    const clothFolder = appSettingsTab.addFolder({
+    const graphicsApiFolder = threeTab.addFolder({
+      title: "Renderer",
+      expanded: false,
+    });
+
+    graphicsApiFolder.addBinding(msh3js.options, 'renderingAPI', {
+      label: 'Graphics API',
+      options: {
+        'WebGL': 'webgl',
+        'WebGL2': 'webgl2',
+        'WebGPU': 'webgpu',
+      },
+    }).on('change', (ev) => {
+      if (msh3js.debug) console.log("Graphics API selection changed to:", ev.value);
+      // TODO: Implement renderer recreation logic here.
+      // For now, we can just log the change.
+      // msh3js.recreateRenderer();
+    });
+
+    const bloomFolder = threeTab.addFolder({
+      title: "Bloom",
+      expanded: false,
+    });
+
+    bloomFolder.addBinding(msh3js.options, "bloomEnabled", { label: "Enable Bloom" }).on("change", (ev) => {
+      if (msh3js.debug) console.log("Bloom set to:", ev.value);
+    });
+
+    bloomFolder.addBinding(msh3js.options, "bloomThreshold", {
+      label: "Threshold",
+      min: 0, max: 1, step: 0.01
+    }).on("change", (ev) => {
+      if (msh3js.debug) console.log("Bloom threshold set to:", ev.value);
+    });
+
+    bloomFolder.addBinding(msh3js.options, "bloomStrength", {
+      label: "Strength",
+      min: 0, max: 3, step: 0.01
+    }).on("change", (ev) => {
+      if (msh3js.debug) console.log("Bloom strength set to:", ev.value);
+    });
+
+    bloomFolder.addBinding(msh3js.options, "bloomRadius", {
+      label: "Radius",
+      min: 0, max: 1, step: 0.01
+    }).on("change", (ev) => {
+      if (msh3js.debug) console.log("Bloom radius set to:", ev.value);
+    });
+
+    const clothFolder = threeTab.addFolder({
       title: "Cloth Simulation",
       expanded: true,
     });
@@ -1057,6 +1126,29 @@ const msh3js = {
       min: 0,
       max: 360,
       step: 1
+    });
+
+    const xrFolder = threeTab.addFolder({
+      title: "WebXR",
+      expanded: false,
+    });
+
+    xrFolder.addBinding(msh3js.options, "AR", {
+      label: "AR",
+    }).on("change", () => {
+      //if (msh3js.options.AR) msh3js.initAR();
+      //else msh3js.resetAR();
+      if (msh3js.debug)
+        console.log("AR set to:", msh3js.options.AR ? "on" : "off");
+    });
+
+    xrFolder.addBinding(msh3js.options, "VR", {
+      label: "VR",
+    }).on("change", () => {
+      //if (msh3js.options.VR) msh3js.initVR();
+      //else msh3js.resetVR();
+      if (msh3js.debug)
+        console.log("VR set to:", msh3js.options.VR ? "on" : "off");
     });
 
     // Preferences Folder for saving and clearing settings.
@@ -1663,7 +1755,7 @@ const msh3js = {
     }
 
     // After loading MSH files, check for and apply .msh.option files
-    for (const mshData of mshFilesToProcess) {
+    for (const mshData of msh3js.three.msh) {
       const optionFileName = mshData.fileName.toLowerCase() + ".option";
       const optionFileObj = msh3js._files[optionFileName];
 
@@ -1689,9 +1781,6 @@ const msh3js = {
                 for (const material of mshData.materials) {
                   if (material.matd?.tx0d?.toLowerCase() === `${textureName}.tga`) {
                     material.matd.tx1d = bumpTextureName; // This will be picked up by the texture loader.
-                    if (material.matd.atrb && !material.matd.atrb.renderFlags.bumpmap) {
-                      material.matd.atrb.renderFlags.bumpmap = true; // Ensure render type supports bump mapping.
-                    }
                     mshData.requiredTextures.push(bumpTextureName);
                   }
                 }
@@ -1701,8 +1790,11 @@ const msh3js = {
             }
           }
         }
+        optionFileObj.processed = true; // Mark as processed
+        fileProcessed = true;
       }
     }
+
     // Check for textures and assign them to Three materials if required
     // Iterate over all files for texture assignment, as textures might be needed by newly added models
     for (const fileObj of Object.values(msh3js._files)) {
@@ -1710,7 +1802,7 @@ const msh3js = {
         // Check if the texture is required by any of the loaded MSH files.
         let required = false;
         for (const msh of msh3js.three.msh) {
-          if (msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) {
+          if (msh.requiredTextures.includes(fileObj.file.name.toLowerCase()) || msh.requiredTextures.includes(fileObj.file.name.toLowerCase().replace(/_bump\.tga$/, '.tga'))) {
             required = true;
             break; // Found a requirement, no need to check other MSH files.
           }
@@ -1732,7 +1824,11 @@ const msh3js = {
 
             // Assign texture to all materials in all MSH files that require it.
             for (const msh of msh3js.three.msh) {
-              if (!msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) continue;
+              if (!msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) {
+                // Also check for existingTextureName + _bump.tga for later .option uploading
+                const baseTextureName = fileObj.file.name.toLowerCase().replace(/_bump\.tga$/, '.tga');
+                if (!msh.requiredTextures.includes(baseTextureName)) continue;
+              }
 
               msh.textures.push(ThreeTexture);
               for (material of msh.materials) {
@@ -1912,8 +2008,7 @@ const msh3js = {
                       material.three.needsUpdate = true;
                       msh.textures.push(detailTexture);
                     }
-                    else if (material.matd.atrb && (material.matd.atrb.renderFlags.bumpmap || material.matd.atrb.renderFlags.bumpmapAndGlossmap ||
-                      material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.bumpmapAndDetailmapAndEnvmap)) {
+                    else if (material.matd.atrb) {
                       if (msh3js.debug) {
                         if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice)
                           console.log('msh3js::processFiles::Bumpmap for refraction found for material:', material.name);
@@ -1964,9 +2059,23 @@ const msh3js = {
                       material.three.needsUpdate = true;
                       msh.textures.push(detailTexture);
                     }
+                    else {
+                      // Treat as bumpMap/normalMap
+                      // Check if the texture is grayscale to determine if it's a bump map.
+                      if (msh3js.isTextureGrayscale(ThreeTexture)) {
+                        if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as bump map (grayscale).');
+                        ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+                        material.three.bumpMap = ThreeTexture;
+                        material.three.bumpScale = 0.1; // Default bump scale
+                      } else { // Otherwise, treat it as a normal map.
+                        if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as normal map (color).');
+                        ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+                        material.three.normalMap = ThreeTexture;
+                      }
+                    }
                   }
 
-                  // Handle tx3d (cubemap)
+                  // Handle tx3d (always cubemap/envmap)
                   if (material.matd.tx3d && material.matd.tx3d.toLowerCase() === fileObj.file.name.toLowerCase()) {
                     if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);
                     // The main cubemap for reflections
@@ -1979,12 +2088,13 @@ const msh3js = {
                   }
                 }
               }
+              fileObj.processed = true; // Mark as processed
+              fileProcessed = true;
             }
           } catch (error) {
             console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
           }
-          fileObj.processed = true; // Mark as processed
-          fileProcessed = true;
+
         } else if (msh3js.three.msh.length > 0) {
           // If MSH files have been loaded and this texture is not required by any of them, discard it.
           if (msh3js.debug) console.log(`processFiles::Discarding unrequired texture: ${fileObj.file.name}`);
@@ -1993,13 +2103,17 @@ const msh3js = {
       }
     }
 
+    // Clear previous UI data before populating with new data
+    msh3js.ui.models = [];
+    msh3js.ui.materials = [];
+
     // Populate msh3js.ui elements w/msh data
-    for (let material of msh3js.three.msh.at(-1).materials)
-      msh3js.ui.materials.push(material);
-    // Only actual mesh geometry is displayed
-    msh3js.three.msh.at(-1).group.traverse((childObj) => {
-      if (childObj.isMesh) msh3js.ui.models.push(childObj);
-    });
+    for (const msh of msh3js.three.msh) {
+      for (const material of msh.materials) {
+        msh3js.ui.materials.push(material);
+      }
+      msh.group.traverse((childObj) => { if (childObj.isMesh) msh3js.ui.models.push(childObj); });
+    }
     msh3js.ui.mshName = msh3js.three.msh.at(-1).fileName;
     msh3js.ui.mshSize = msh3js.three.msh.at(-1).fileSize;
     msh3js.ui.mshLastModified = new Date(msh3js.three.msh.at(-1).lastModified).toLocaleString();
@@ -2595,7 +2709,6 @@ const msh3js = {
   },
 
   // Frame camera to fit an object's bounding box
-  // TODO: reverse depth threshold
   frameCamera(obj = null, margin = 1.0) {
     if (!msh3js.three.camera) msh3js.createCamera(); // Ensure camera exists
 
@@ -2799,6 +2912,9 @@ const msh3js = {
     msh3js.three.loadingManager = new THREE.LoadingManager();
     // Set up loading manager events
     msh3js.three.loadingManager.onStart = function (url, items, total) {
+      if (msh3js._loadingBar.container) {
+        msh3js._loadingBar.container.style.display = 'flex';
+      }
       if (msh3js.debug)
         console.log(
           "LoadingManager::Started loading:",
@@ -2809,6 +2925,11 @@ const msh3js = {
         );
     };
     msh3js.three.loadingManager.onProgress = function (url, loaded, total) {
+      const progress = loaded / total;
+      const spheresToShow = Math.ceil(progress * msh3js._loadingBar.spheres.length);
+      msh3js._loadingBar.spheres.forEach((sphere, index) => {
+        sphere.style.opacity = index < spheresToShow ? '1.0' : '0.2';
+      });
       if (msh3js.debug)
         console.log(
           "LoadingManager::In progress:",
@@ -2817,8 +2938,10 @@ const msh3js = {
         );
     };
     msh3js.three.loadingManager.onLoad = function () {
-      if (msh3js.debug)
-        console.log("LoadingManager::Finished!");
+      if (msh3js._loadingBar.container) {
+        msh3js._loadingBar.container.style.display = 'none';
+      }
+      if (msh3js.debug) console.log("LoadingManager::Finished!");
     };
     msh3js.three.loadingManager.onError = function (url) {
       if (msh3js.debug)
@@ -3485,31 +3608,43 @@ const msh3js = {
       }
     });
 
-    const onMouseDown = (e) => {
+    const onDragStart = (e) => {
+      // Use the first touch point for touch events, or the mouse event itself
+      const point = e.touches ? e.touches[0] : e;
+
       // Only start dragging if the click is on the pane's title bar or a folder header
       const target = e.target;
       if (target.classList.contains('tp-rotv_t')) {
         isDragging = true;
         hasDragged = false; // Reset on new mousedown
-        startPos.x = e.clientX;
-        startPos.y = e.clientY;
-        offsetX = e.clientX - element.getBoundingClientRect().left;
-        offsetY = e.clientY - element.getBoundingClientRect().top;
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
+        startPos.x = point.clientX;
+        startPos.y = point.clientY;
+        offsetX = point.clientX - element.getBoundingClientRect().left;
+        offsetY = point.clientY - element.getBoundingClientRect().top;
+
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('mouseup', onDragEnd);
+        document.addEventListener('touchmove', onDragMove, { passive: false });
+        document.addEventListener('touchend', onDragEnd);
+
         target.style.cursor = 'grabbing'; // Set cursor to 'grabbing' while dragging
         // Add a capture-phase click listener to intercept the click before Tweakpane does.
         element.addEventListener('click', onClickCapture, { capture: true });
       }
     };
 
-    const onMouseMove = (e) => {
+    const onDragMove = (e) => {
       if (!isDragging) return;
+
+      // Prevent scrolling during drag on touch devices
+      if (e.touches) e.preventDefault();
+
+      const point = e.touches ? e.touches[0] : e;
 
       // Check if the mouse has moved beyond the threshold
       if (!hasDragged) {
-        const dx = e.clientX - startPos.x;
-        const dy = e.clientY - startPos.y;
+        const dx = point.clientX - startPos.x;
+        const dy = point.clientY - startPos.y;
         if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
           hasDragged = true;
         }
@@ -3519,22 +3654,25 @@ const msh3js = {
       const elementRect = element.getBoundingClientRect();
 
       // Calculate the new position relative to the viewport
-      const newLeft = e.clientX - offsetX;
-      const newTop = e.clientY - offsetY;
+      const newLeft = point.clientX - offsetX;
+      const newTop = point.clientY - offsetY;
 
       // Clamp the position within the parent container's bounds, accounting for the parent's position.
       element.style.left = `${Math.max(parentRect.left, Math.min(newLeft, parentRect.right - elementRect.width)) - parentRect.left}px`;
       element.style.top = `${Math.max(parentRect.top, Math.min(newTop, parentRect.bottom - elementRect.height)) - parentRect.top}px`;
     };
 
-    const onMouseUp = () => {
+    const onDragEnd = () => {
       isDragging = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+      document.removeEventListener('mousemove', onDragMove);
+      document.removeEventListener('mouseup', onDragEnd);
+      document.removeEventListener('touchmove', onDragMove);
+      document.addEventListener('touchend', onDragEnd);
       document.body.style.cursor = ''; // Reset cursor on drag end
     };
 
-    element.addEventListener('mousedown', onMouseDown);
+    element.addEventListener('mousedown', onDragStart);
+    element.addEventListener('touchstart', onDragStart, { passive: false });
 
     const onClickCapture = (e) => {
       // If a drag occurred, stop the click event from reaching Tweakpane.
@@ -3550,15 +3688,15 @@ const msh3js = {
   makeResizable(element) {
     const minWidth = 240;
     const handleWidth = 8; // Increased handle area for easier grabbing
- 
+
     let isResizing = false;
     let startX = 0;
     let startWidth = 0;
- 
+
     // This function checks the mouse position and changes the cursor.
     const onMouseMoveCursor = (e) => {
       if (isResizing) return; // Don't change cursor while actively resizing
- 
+
       const rect = element.getBoundingClientRect();
       // Check if the mouse is over the right edge.
       // We use clientX and rect.right for viewport-relative coordinates.
@@ -3566,43 +3704,43 @@ const msh3js = {
         element.style.cursor = 'ew-resize';
       }
     };
- 
+
     const onMouseDown = (e) => {
       // Only start resizing if the cursor is the resize cursor.
       if (element.style.cursor === 'ew-resize') {
         isResizing = true;
         startX = e.clientX;
         startWidth = element.offsetWidth;
- 
+
         // Prevent text selection and other default behaviors during resize.
         e.preventDefault();
         e.stopPropagation();
- 
+
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
       }
     };
- 
+
     const onMouseMove = (e) => {
       if (!isResizing) return;
- 
+
       const dx = e.clientX - startX;
       let newWidth = startWidth + dx;
- 
+
       // Enforce minimum width
       newWidth = Math.max(minWidth, newWidth);
- 
+
       element.style.width = `${newWidth}px`;
     };
- 
+
     const onMouseUp = () => {
       if (!isResizing) return;
       isResizing = false;
- 
+
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
     };
- 
+
     // Listen for mouse movement over the element to change the cursor.
     element.addEventListener('mousemove', onMouseMoveCursor);
     element.addEventListener('mousedown', onMouseDown);

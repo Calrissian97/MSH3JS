@@ -75,13 +75,13 @@
       --tp-monitor-foreground-color: hsla(0, 0%, 80%, 1.00);
     }
 
-    /* Force Orbitron font on Tweakpane elements */
+    /* Force selected font on Tweakpane elements */
     #tweakpaneContainer {
       position: absolute;
       top: 10px;
       right: 10px;
       z-index: 1;
-      width: 256px;
+      width: 290px;
       /* Define a variable for the font, defaulting to Orbitron */
       --tweakpane-font: "Orbitron";
     }
@@ -90,6 +90,35 @@
       font-family: var(--tweakpane-font), sans-serif;
     }
 
+    #loading-container {
+      position: absolute;
+      bottom: 30px;
+      right: 30px;
+      display: none; /* Hidden by default, will be set to 'flex' by JS */
+      z-index: 2;
+      align-items: center;
+      color: #FFFFFF;
+      font-family: 'Orbitron', sans-serif;
+      text-shadow: 1px 1px 2px black;
+    }
+
+    .loading-text {
+      margin-right: 10px;
+      font-size: 1em;
+    }
+
+    .loading-sphere {
+      display: inline-block;
+      width: 15px;
+      height: 15px;
+      background-color: #648FFF;
+      /* A nice light blue */
+      border-radius: 50%;
+      margin: 0 4px;
+      opacity: 0.2;
+      /* Initially dim */
+      transition: opacity 0.3s ease;
+    }
   </style>
 </head>
 
@@ -115,6 +144,14 @@
   <!-- Canvas to render .msh file -->
   <div id="app">
     <canvas id="msh3jsCanvas" width="64" height="64"></canvas>
+    <div id="loading-container">
+      <span class="loading-text">Loading...</span>
+      <div class="loading-sphere"></div>
+      <div class="loading-sphere"></div>
+      <div class="loading-sphere"></div>
+      <div class="loading-sphere"></div>
+      <div class="loading-sphere"></div>
+    </div>
   </div>
 
   <!-- App entry (ESM) -->
