@@ -1,6 +1,6 @@
 {
-  "name": "Star Wars Battlefront .msh Three.js model viewer",
-  "short_name": "MSH3js",
+  "name": "MSH3JS",
+  "short_name": "MSH3JS",
   "start_url": ".",
   "scope": "./",
   "display": "standalone",
@@ -42,7 +42,7 @@
     {
       "action": ".",
       "accept": {
-        "application/octet-stream": [".msh", ".msh.option"],
+        "application/octet-stream": [".msh", ".option"],
         "image/tga": [".tga"]
       },
       "launch_type": "single-client"
