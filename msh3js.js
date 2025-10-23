@@ -36,7 +36,7 @@ const msh3js = {
     dirLightElevation: 30.0, // Directional light elevation (Rotation in degrees by X axis)
     dirLight2Color: "#ffffff",
     dirLight2Intensity: 0.0, // Disable secondary directional light by default
-    dirLight2Azimuth: 270.0,
+    dirLight2Azimuth: 270.0, // Set opposite orientation as dirLight1
     dirLight2Elevation: -30.0,
     ambLightColor: "#4d4d4d", // Ambient light color
     ambLightIntensity: 1.0, // Ambient light intensity
@@ -46,9 +46,9 @@ const msh3js = {
     preferredGPU: "high-performance", // GPU preference
     aa: false, // anti-aliasing flag
     sampleCount: 0, // sample count
-    pixelRatio: 1.0, // pixel ratio
+    pixelRatio: window.devicePixelRatio ?? 1.0, // pixel ratio
     showStats: false, // Show stats flag
-    showSkeleton: false,
+    showSkeleton: false, // Show skeleton helper
     clothSim: true, // Enable cloth simulation
     clothWindSpeed: 2.0, // Wind speed for cloth simulation
     clothWindDirection: 280.0, // Wind direction in degrees (0-360)
@@ -155,14 +155,16 @@ const msh3js = {
   _loadingBar: {
     container: null,
     spheres: [],
+    spheresCount: 0,
+    processedCount: 0,
   },
   // service worker
   _serviceWorker: null,
   // Dynamically Imported modules (ViewHelper, Stats, Tweakpane, webgl-lint)
   _modules: {},
-  // Input files
+  // Input asset files (.msh, .tga, .option)
   _files: {},
-  // Animation-only input files
+  // Animation-only input files (.msh)
   _animFiles: {},
   // HTML file input
   _fileInput: null,
@@ -172,7 +174,7 @@ const msh3js = {
     webGL2: { supported: false, aa: false, maxSamples: 0, reverseDepth: true, sampleCountOptions: [] }, // WebGL2 support flag
     localStorage: false, // LocalStorage support flag
     persistentStorage: false, // PersistentStorage support flag
-    _serviceWorker: false, // ServiceWorker support flag
+    serviceWorker: false, // ServiceWorker support flag
   },
   // Reverse depth buffer flag (for large geometries)
   _useReverseDepth: false,
@@ -180,6 +182,8 @@ const msh3js = {
   // Initializes app state and populates msh3js object
   async initApp(params) {
     if (msh3js.debug) console.log("initApp::params:", params);
+    // Store params for startThree from processFiles (launch files)
+    msh3js.params = params;
 
     // Test for localStorage permissions
     if (window.localStorage) {
@@ -188,7 +192,6 @@ const msh3js = {
         window.localStorage.setItem(testItem, testItem);
         window.localStorage.removeItem(testItem);
         msh3js._supportedFeatures.localStorage = true;
-        if (msh3js.debug) console.log("initApp::localStorage available.");
       } catch (e) {
         console.error("initApp::localStorage error:", e);
       }
@@ -196,81 +199,70 @@ const msh3js = {
 
     // Update options object from localStorage (User preferences)
     if (msh3js._supportedFeatures.localStorage) {
-      if (localStorage.getItem("msh3js_options")) {
-        Object.assign(
-          msh3js.options,
-          JSON.parse(localStorage.getItem("msh3js_options"))
-        );
-        if (msh3js.debug)
-          console.log(
-            "initApp::msh3js_options object loaded from localStorage."
-          );
+      let msh3jsOptions = null;
+      try {
+        msh3jsOptions = localStorage.getItem("msh3js_options");
+        if (msh3jsOptions) {
+          Object.assign(msh3js.options, JSON.parse(msh3jsOptions));
+          if (msh3js.debug) console.log("initApp::msh3js_options object loaded from localStorage.");
+        } else if (msh3js.debug) console.log("initApp::msh3js_options object not found in localStorage.");
+      } catch (e) {
+        console.error("initApp::Error loading msh3js_options from localStorage:", e);
       }
     }
 
-    // Get canvas and canvas container
+    // Assign msh3js global HTML containers
     msh3js.canvas = params.appCanvas;
-    msh3js._appContainer = params._appContainer;
-
-    // Get loading bar elements
-    msh3js._loadingBar.container = document.getElementById("loading-container");
-    msh3js._loadingBar.spheres = document.querySelectorAll(".loading-sphere");
-
+    msh3js._appContainer = params.appContainer;
+    msh3js._tweakpaneContainer = params.tweakpaneContainer;
+    msh3js._loadingBar.container = params.loadingContainer;
 
     // Process passed app options (Overrides options from localStorage if present)
+    // TODO: Finish to allow override of all saved options
     if (params.AA != null) msh3js.options.aa = params.AA;
-    if (params.AAsampleCount != null)
-      msh3js.options.sampleCount = params.AAsampleCount;
-    if (params.autoRotate != null)
-      msh3js.options.autoRotate = params.autoRotate;
-    if (params.autoRotateSpeed != null)
-      msh3js.options.autoRotateSpeed = params.autoRotateSpeed;
-    if (params.backgroundColor != null)
-      msh3js.options.backgroundColor = params.backgroundColor;
-    if (params.backgroundImage != null)
-      msh3js.options.backgroundImage = params.backgroundImage;
-    if (params.controlDamping != null)
-      msh3js.options.controlDamping = params.controlDamping;
+    if (params.AAsampleCount != null) msh3js.options.sampleCount = params.AAsampleCount;
+    if (params.autoRotate != null) msh3js.options.autoRotate = params.autoRotate;
+    if (params.autoRotateSpeed != null) msh3js.options.autoRotateSpeed = params.autoRotateSpeed;
+    if (params.backgroundColor != null) msh3js.options.backgroundColor = params.backgroundColor;
+    if (params.backgroundImage != null) msh3js.options.backgroundImage = params.backgroundImage;
+    if (params.controlDamping != null) msh3js.options.controlDamping = params.controlDamping;
     if (params.displayHelpers != null) {
       msh3js.options.enableDirLightHelper = params.displayHelpers;
       msh3js.options.enableDirLightHelper2 = params.displayHelpers;
       msh3js.options.enableViewHelper = params.displayHelpers;
       msh3js.options.enableGrid = params.displayHelpers;
+      msh3js.options.showSkeleton = params.displayHelpers;
     }
-    if (params.displayShadows != null)
-      msh3js.options.enableShadows = params.displayShadows;
-    if (params.displayStats != null)
-      msh3js.options.showStats = params.displayStats;
+    if (params.displayShadows != null) msh3js.options.enableShadows = params.displayShadows;
+    if (params.displayStats != null) msh3js.options.showStats = params.displayStats;
     if (params.GPU != null) msh3js.options.preferredGPU = params.GPU;
+    if (params.pixelRatio != null) msh3js.options.pixelRatio = params.pixelRatio;
+    if (params.size != null) {
+      msh3js._appContainer.style.width = params.size.width;
+      msh3js._appContainer.style.height = params.size.height;
+    }
 
-    // Get pixel ratio
-    msh3js.options.pixelRatio =
-      params.pixelRatio ??
-      msh3js.options.pixelRatio ??
-      window.devicePixelRatio ??
-      1.0;
-    if (msh3js.debug)
-      console.log("initApp::pixelRatio:", msh3js.options.pixelRatio);
+    // Set canvas size to fill _appContainer
+    msh3js.canvas.style.width = '100%';
+    msh3js.canvas.style.height = '100%';
 
     // Get canvas size and record
     msh3js.size = {
       width: msh3js.canvas.clientWidth * msh3js.options.pixelRatio,
       height: msh3js.canvas.clientHeight * msh3js.options.pixelRatio,
     }
-    if (msh3js.debug)
-      console.log("initApp::appSize:", msh3js.size.width, "x", msh3js.size.height);
+    if (msh3js.debug) console.log("initApp::appSize:", msh3js.size.width, "x", msh3js.size.height);
 
-    // Register service worker to serve app content
+    // Register service worker to serve app content offline, save/clear user preferences
     if ("serviceWorker" in navigator) {
       try {
         const registration = await navigator.serviceWorker.register("./sw.js");
-        msh3js._serviceWorker = registration.active;
-        msh3js._supportedFeatures._serviceWorker = true;
-        if (msh3js.debug) console.log("initApp::Service Worker registered with scope:",
-          registration.scope);
-      } catch (e) {
-        console.error("initApp::Service Worker registration failed:", e);
-      }
+        // Store registration status
+        msh3js._serviceWorker = registration.active ?? registration.waiting ?? registration.installing;
+        // Set supportedFeatures value if service worker is enabled
+        msh3js._supportedFeatures.serviceWorker = !!msh3js._serviceWorker;
+        if (msh3js.debug) console.log("initApp::Service Worker enabled with scope:", registration.scope);
+      } catch (e) { console.error("initApp::Service Worker registration failed:", e); }
       // Listen for messages from the service worker
       navigator.serviceWorker.addEventListener('message', event => {
         if (event.data && event.data.action === 'reload') {
@@ -279,6 +271,7 @@ const msh3js = {
         }
       });
     }
+
     // Get supported graphics features
     await msh3js.getSupportedGraphicsFeatures();
 
@@ -306,11 +299,23 @@ const msh3js = {
     if (msh3js.debug)
       console.log("initApp::Supported features:", msh3js._supportedFeatures);
 
-    // Get launch files (if any)
-    if (await msh3js.getLaunchFiles() === true) {
-      await msh3js.processFiles(msh3js._files);
+    // Get launch files and process them if present
+    if (window.launchQueue) {
+      window.launchQueue.setConsumer(async (launchParams) => {
+        if (launchParams.files && launchParams.files.length > 0) {
+          const files = await Promise.all(launchParams.files.map(fh => fh.getFile()));
+          if (msh3js.debug) console.log("getLaunchFiles::App launched with files:", launchParams.files);
+          msh3js.addFiles(files);
+          await msh3js.processFiles(msh3js._files);
+        }
+      });
     }
-    // Create file input and display splashscreen
+
+    //if (await msh3js.getLaunchFiles() === true) {
+    //  await msh3js.processFiles(msh3js._files);
+    //}
+
+    // Create file input and add listeners
     msh3js.createFileInput();
     msh3js.manageListeners("add", "fileDropCanvas");
     msh3js.manageListeners("add", "resize");
@@ -320,8 +325,8 @@ const msh3js = {
   },
 
   // Main entrypoint that calls initApp with passed params and sets render method
-  async startApp(
-    canvas = null,
+  async startApp(canvas = null,
+    // TODO: finish to allow override of saved options
     options = {
       AA: null,
       AAsampleCount: null,
@@ -344,67 +349,75 @@ const msh3js = {
     if (msh3js.debug) {
       // Check for passed options
       let optionsPassed = false;
-      for (const key in options) {
-        if (options[key] !== null) {
-          optionsPassed = true;
-          break;
-        }
-      }
+      for (const key in options) if (options[key] !== null) { optionsPassed = true; break; }
       console.log("startApp::canvas:", canvas);
       console.log("startApp::options:", optionsPassed ? options : "defaults");
     }
 
+    // --- Locate/Create HTML elements ---
     // Get canvas container (a div or the body if not found)
-    let _appContainer = document.getElementById("app") ?? document.getElementById("msh3js") ?? document.body;
-    msh3js._tweakpaneContainer = document.getElementById("tweakpaneContainer") ?? document.createElement("div");
-    msh3js._tweakpaneContainer.id = "tweakpaneContainer";
+    let appContainer = document.getElementById("app") ?? document.getElementById("msh3js") ?? document.body;
 
-    // Make the container draggable
-    msh3js.makeDraggable(msh3js._tweakpaneContainer);
-    msh3js.makeResizable(msh3js._tweakpaneContainer);
-
-    _appContainer.appendChild(msh3js._tweakpaneContainer);
-    // Either get canvas from param or from HTML or create a new one and append it to the container
-    let appCanvas = canvas ?? _appContainer.getElementById("msh3jsCanvas") ??
-      _appContainer.querySelector("canvas") ??
+    // Either get canvas from param or from HTML or create a new one inside appContainer
+    let appCanvas = canvas ?? document.getElementById("msh3jsCanvas") ?? appContainer.querySelector("canvas") ??
       msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height }, true);
 
-    // Get passed app options
-    const params = { appCanvas: appCanvas, _appContainer: _appContainer };
+    // Get/create tweakpane panel container (div)
+    let tweakpaneContainer = null;
+    // Only do this if not explicitly disabled
+    if (options.displayTweakpane === true || options.displayTweakpane === null) {
+      tweakpaneContainer = document.getElementById("tweakpaneContainer");
+      if (!tweakpaneContainer) {
+        tweakpaneContainer = document.createElement("div");
+        tweakpaneContainer.id = "tweakpaneContainer";
+        appContainer.appendChild(tweakpaneContainer);
+      }
+      // Make tweakpane container draggable and resizable from right edge
+      msh3js.makeDraggable(tweakpaneContainer);
+      msh3js.makeResizable(tweakpaneContainer);
+    }
+
+    // Get/create loading bar container and elements
+    let loadingContainer = document.getElementById("loading-container");
+    if (!loadingContainer) {
+      loadingContainer = document.createElement("div");
+      loadingContainer.id = 'loading-container';
+      appContainer.appendChild(loadingContainer);
+    }
+
+    // Get/create loading text
+    let loadingText = document.getElementById('loading-text');
+    if (!loadingText) {
+      loadingText = document.createElement('span');
+      loadingText.id = 'loading-text';
+      loadingText.textContent = 'Loading...';
+      loadingContainer.appendChild(loadingText);
+    }
+
+    // Assign params from HTML element references and passed app options
+    const params = { appCanvas, appContainer, tweakpaneContainer, loadingContainer };
     if (options.AA !== null) params.aa = options.AA;
-    if (options.AAsampleCount !== null)
-      params.sampleCount = options.AAsampleCount;
-    if (options.ambientLighting !== null)
-      params.ambientLighting = options.ambientLighting;
+    if (options.AAsampleCount !== null) params.sampleCount = options.AAsampleCount;
+    if (options.ambientLighting !== null) params.ambientLighting = options.ambientLighting;
     if (options.autoRotate !== null) params.autoRotate = options.autoRotate;
-    if (options.autoRotateSpeed !== null)
-      params.autoRotateSpeed = options.autoRotateSpeed;
-    if (options.backgroundColor !== null)
-      params.backgroundColor = options.backgroundColor;
-    if (options.backgroundImage !== null)
-      params.backgroundImage = options.backgroundImage;
-    if (options.controlDamping !== null)
-      params.controlDamping = options.controlDamping;
+    if (options.autoRotateSpeed !== null) params.autoRotateSpeed = options.autoRotateSpeed;
+    if (options.backgroundColor !== null) params.backgroundColor = options.backgroundColor;
+    if (options.backgroundImage !== null) params.backgroundImage = options.backgroundImage;
+    if (options.controlDamping !== null) params.controlDamping = options.controlDamping;
     if (options.dirLight !== null) params.dirLight = options.dirLight;
-    else params.dirLight = { color: "#b3b3b3", intensity: 1.0, azimuth: 90.0, elevation: 30.0 };
     if (options.dirLight2 !== null) params.dirLight2 = options.dirLight2;
-    else params.dirLight2 = { color: "#ffffff", intensity: 0.0, azimuth: -90.0, elevation: -30.0 };
-    if (options.displayHelpers !== null)
-      params.displayHelpers = options.displayHelpers;
-    if (options.displayShadows !== null)
-      params.displayShadows = options.displayShadows;
-    if (options.displayStats !== null)
-      params.displayStats = options.displayStats;
-    if (options.displayTweakpane !== null)
-      params.displayTweakpane = options.displayTweakpane;
+    if (options.displayHelpers !== null) params.displayHelpers = options.displayHelpers;
+    if (options.displayShadows !== null) params.displayShadows = options.displayShadows;
+    if (options.displayStats !== null) params.displayStats = options.displayStats;
+    if (options.displayTweakpane !== null) params.displayTweakpane = options.displayTweakpane;
     if (options.GPU !== null) params.preferredGPU = options.GPU;
     if (options.pixelRatio !== null) params.pixelRatio = options.pixelRatio;
-
+    msh3js.params = params;
+    // Import webgl-lint if in debug
     if (msh3js.debug)
       if (!msh3js._modules.webglLint)
         msh3js._modules.webglLint = await import("webgl-lint");
 
-    msh3js.params = params;
     // Initialize the app object
     const initialized = await msh3js.initApp(params);
     if (!initialized) {
@@ -416,68 +429,19 @@ const msh3js = {
       );
       return msh3js;
     }
-    if (msh3js.debug) console.log("startApp: App started.");
+    if (msh3js.debug) console.log("startApp::App started.");
     await msh3js.startThree(params);
-  },
-
-  // Add or remove Stats.js from app
-  async initStats(enabled = true) {
-    if (enabled === true) {
-      if (!msh3js.stats) {
-        // Check if Stats is already imported
-        let Stats;
-        if (msh3js._modules.Stats)
-          Stats = msh3js._modules.Stats;
-        else {
-          const statsModule = await import("stats-gl");
-          Stats = statsModule.default;
-          msh3js._modules.Stats = Stats;
-        }
-
-        if (msh3js.three.renderer) {
-          // Initialize stats
-          const stats = new Stats({
-            trackGPU: true,
-            trackHz: true,
-            logsPerSecond: 4,
-            graphsPerSecond: 4,
-            samplesLog: 40,
-            samplesGraph: 40,
-            precision: 2,
-            mode: 0
-          });
-
-          stats.init(msh3js.three.renderer);
-          msh3js.stats = stats;
-          // Add stats to HTML body if not already present
-          if (!msh3js._appContainer.contains(msh3js.stats.dom))
-            msh3js._appContainer.appendChild(msh3js.stats.dom);
-          if (msh3js.debug)
-            console.log(
-              "initStats::Stats dom object", msh3js.stats.dom, "appended to HTML body.\n",
-              "initStats::Stats initialized:", msh3js.stats);
-        }
-      }
-    } else {
-      // Remove stats from HTML body if already present
-      if (msh3js.stats && msh3js._appContainer.contains(msh3js.stats.dom)) {
-        const canvas = msh3js.stats.dom.querySelector("canvas");
-        if (canvas) msh3js.stats.dom.removeChild(canvas);
-        msh3js._appContainer.removeChild(msh3js.stats.dom);
-        if (msh3js.debug)
-          console.log("initStats::Stats deconstructed and removed from HTML body.");
-      }
-      msh3js.stats = null;
-    }
-    return msh3js.stats;
   },
 
   // Setup any unpopulated three.js components
   async initThree() {
     // Note: This function will not overwrite existing objects
     if (!msh3js.three.scene) msh3js.createScene();
+
     if (!msh3js.three.camera) msh3js.createCamera();
+
     if (!msh3js.three.orbitControls) msh3js.createOrbitControls();
+
     if (!msh3js.three.renderer || !msh3js.context) {
       const { renderer, context } = await msh3js.createRenderer({
         renderingAPI: msh3js._supportedFeatures.webGL2.supported ? "webGL2" : "webGL",
@@ -492,11 +456,12 @@ const msh3js = {
       msh3js.three.renderer = renderer;
       msh3js.context = context;
     }
-    if (!msh3js.three.loadingManager)
-      msh3js.createLoaders();
+    if (!msh3js.three.loadingManager) msh3js.createLoaders();
+
     if (!msh3js.three.viewHelper)
       if (msh3js.options.enableViewHelper === true)
         await msh3js.createViewHelper();
+    if (msh3js.debug) console.log("initThree::Three.js initialized:", msh3js.three);
   },
 
   // Begins three.js setup and rendering
@@ -529,13 +494,13 @@ const msh3js = {
       msh3js.three.dirLight2.color.set(msh3js.options.dirLight2Color);
       msh3js.three.dirLight2.intensity = msh3js.options.dirLight2Intensity;
     }
-    // Optionally set up tweakpane and stats if needed
-    if (params.displayTweakpane !== false) {
-      await msh3js.initTweakpane(params.displayTweakpane);
-    }
+    // Optionally set up stats and tweakpane if needed
     if (msh3js.debug === true) msh3js.options.showStats = true;
     if (params.showStats !== false) {
       await msh3js.initStats(msh3js.options.showStats);
+    }
+    if (params.displayTweakpane !== false) {
+      await msh3js.initTweakpane(params.displayTweakpane);
     }
     // Set animation loop
     if (msh3js.three.renderer) {
@@ -544,7 +509,54 @@ const msh3js = {
     if (msh3js.debug) console.log("startThree: Three.js started.");
   },
 
-  // Setup and return tweakpane pane
+  // Remove or add and return Stats.js
+  async initStats(enabled = true) {
+    if (enabled === true) {
+      if (!msh3js.stats) {
+        // Check if Stats is already imported
+        let Stats;
+        if (msh3js._modules.Stats)
+          Stats = msh3js._modules.Stats;
+        else {
+          const statsModule = await import("stats-gl");
+          Stats = statsModule.default;
+          msh3js._modules.Stats = Stats;
+        }
+
+        if (msh3js.three.renderer) {
+          // Initialize stats
+          const stats = new Stats({
+            trackGPU: true,
+            trackHz: true,
+            logsPerSecond: 4,
+            graphsPerSecond: 4,
+            samplesLog: 40,
+            samplesGraph: 40,
+            precision: 2,
+            mode: 0
+          });
+
+          stats.init(msh3js.three.renderer);
+          stats.dom.id = "Stats";
+          msh3js.stats = stats;
+          // Add stats to HTML body if not already present
+          if (!msh3js._appContainer.contains(msh3js.stats.dom))
+            msh3js._appContainer.appendChild(msh3js.stats.dom);
+          if (msh3js.debug) console.log("initStats::Stats", msh3js.stats.dom, "appended to HTML body.");
+        }
+      }
+    } else {
+      // Remove stats from HTML body if enabled is false
+      if (msh3js.stats && msh3js._appContainer.contains(msh3js.stats.dom)) {
+        msh3js._appContainer.removeChild(msh3js.stats.dom);
+        if (msh3js.debug) console.log("initStats::Stats deconstructed and removed from HTML body.");
+      }
+      msh3js.stats = null;
+    }
+    return msh3js.stats;
+  },
+
+  // Remove or add and return tweakpane pane
   async initTweakpane(enabled = true) {
     // Dispose of any existing pane to prevent duplicates
     if (msh3js.pane) msh3js.pane.dispose();
@@ -1231,8 +1243,7 @@ const msh3js = {
 
     // Button to import additional animations
     animationsTab.addButton({ title: "Import Animations..." }).on("click", () => {
-      const animFileInput = msh3js.createAnimationFileInput();
-      if (animFileInput) animFileInput.click();
+      msh3js.createAnimationFileInput().click();
     });
 
     // Add dropdown to select animation, which will be present even if no model is loaded
@@ -1313,103 +1324,6 @@ const msh3js = {
     msh3js.pane.refresh();
 
     return pane;
-  },
-
-  // Updates just the animation list in Tweakpane without rebuilding the whole UI.
-  updateAnimationList() {
-    if (!msh3js.pane || !msh3js.ui.animationDropdown) {
-      if (msh3js.debug) console.log("updateAnimationList:: Pane or dropdown not ready, skipping update.");
-      return;
-    }
-
-    if (msh3js.debug) console.log("updateAnimationList:: Refreshing animation dropdown.");
-
-    // Prepare the new list of options, starting with the default 'None'.
-    const newAnimOptions = [{ text: 'None', value: 'None' }];
-    const allAnimNames = new Set();
-
-    // Gather all unique animation names from all loaded MSH objects.
-    for (const msh of msh3js.three.msh) {
-      if (msh.animations && msh.animations.length > 0) {
-        for (const anim of msh.animations) {
-          allAnimNames.add(anim.name);
-        }
-      }
-    }
-
-    // Add the unique names to our options list.
-    for (const name of allAnimNames) {
-      newAnimOptions.push({ text: name, value: name });
-    }
-
-    // Update the options on the existing Tweakpane control.
-    msh3js.ui.animationDropdown.options = newAnimOptions;
-  },
-
-  // Manages listeners by group (renderTrigger, resize, fileDrop) and action (add/remove)
-  manageListeners(action, group) {
-    if (msh3js.debug) console.log("manageListeners::params::action:", action, "group:", group);
-
-    if (group === "fileDropCanvas") {
-      const dropZone = msh3js.canvas ?? msh3js._appContainer.getElementById("msh3jsCanvas") ?? msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height });
-      if (dropZone) {
-        if (action === "add") {
-          if (!msh3js._listeners.fileDrop) {
-            try {
-              dropZone.addEventListener("dragenter", msh3js.preventDrag);
-              dropZone.addEventListener("dragover", msh3js.preventDrag);
-              dropZone.addEventListener("drop", msh3js.drop);
-              msh3js._listeners.fileDrop = true;
-            } catch (e) { console.error("manageListeners::Error adding fileDrop listeners:", e); }
-          }
-        } else if (action === "remove") {
-          if (msh3js._listeners.fileDrop) {
-            try {
-              dropZone.removeEventListener("dragenter", msh3js.preventDrag);
-              dropZone.removeEventListener("dragover", msh3js.preventDrag);
-              dropZone.removeEventListener("drop", msh3js.drop);
-              msh3js._listeners.fileDrop = null;
-            } catch (e) { console.error("manageListeners::Error removing fileDrop listeners:", e); }
-          }
-        } else {
-          console.warn("manageListeners::Unknown action:", action);
-        }
-      }
-    } else if (group === "fileInput") {
-      if (action === "add") {
-        if (!msh3js._listeners.fileInput) {
-          try {
-            msh3js._fileInput.addEventListener("change", msh3js.handleFileInput);
-            msh3js._listeners.fileInput = true;
-          } catch (e) { console.error("manageListeners::Error adding fileInput listener:", e); }
-        }
-      } else if (action === "remove") {
-        if (msh3js._listeners.fileInput) {
-          try {
-            msh3js._fileInput.removeEventListener("change", msh3js.handleFileInput);
-            msh3js._listeners.fileInput = false;
-          } catch (e) { console.error("manageListeners::Error removing fileInput listener:", e); }
-        }
-      }
-    } else if (group === "resize") {
-      if (action === "add") {
-        if (!msh3js._listeners.resize) {
-          try {
-            window.addEventListener("resize", msh3js.resize);
-            msh3js._listeners.resize = true;
-          } catch (e) { console.error("manageListeners::Error adding resize listener:", e); }
-        }
-      } else if (action === "remove") {
-        if (msh3js._listeners.resize) {
-          try {
-            window.removeEventListener("resize", msh3js.resize);
-            msh3js._listeners.resize = false;
-          } catch (e) { console.error("manageListeners::Error removing resize listener:", e); }
-        }
-      } else {
-        console.warn("manageListeners::Unknown action:", action);
-      }
-    } else { console.warn("manageListeners::Unknown group:", group); }
   },
 
   // Main render function
@@ -1612,29 +1526,6 @@ const msh3js = {
     return false;
   },
 
-  // Prevents default drag behavior
-  preventDrag(e) {
-    e.preventDefault();
-    e.stopPropagation();
-  },
-
-  // Function to handle file drops
-  async drop(e) {
-    e.stopPropagation();
-    e.preventDefault();
-    const droppedFiles = e.dataTransfer.files;
-    if (msh3js.debug) console.log("drop::Files dropped:", droppedFiles);
-    msh3js.addFiles(droppedFiles);
-    await msh3js.processFiles(msh3js._files);
-  },
-
-  // Click file input
-  clickFileInput(e) {
-    const fileInput = msh3js._fileInput ?? document.getElementById("fileInput") ?? msh3js.createFileInput();
-    if (fileInput)
-      fileInput.click();
-  },
-
   // Adds input files to a global files object
   addFiles(files) {
     for (const file of files) {
@@ -1659,6 +1550,9 @@ const msh3js = {
     const mshFilesToProcess = [];
     // Only process files that have not been processed yet
     const filesToProcess = Object.values(msh3js._files).filter(f => !f.processed);
+    // Store file count for loading bar
+    const filesCount = filesToProcess.length;
+    msh3js.showLoadingBar(filesCount);
     for (const fileObj of filesToProcess) {
       if (fileObj.file.name.toLowerCase().endsWith(".msh")) {
         // Load msh file with MSHLoader
@@ -1686,71 +1580,72 @@ const msh3js = {
         mshFilesToProcess.push(msh3js.three.msh.at(-1));
         // Add msh to Three scene
         msh3js.three.scene.add(mshScene);
+
+        // After loading, check for hardpoint attachments
+        for (const newMshData of mshFilesToProcess) {
+          const newMshScene = newMshData.group;
+          const hpActive = newMshScene.getObjectByName('hp_active');
+
+          if (hpActive) {
+            if (msh3js.debug) console.log(`processFiles::Found "hp_active" in ${newMshData.fileName}`);
+
+            // Search for 'hp_weapons' in all other loaded meshes
+            let hpWeapons = null;
+            let parentMshGroup = null;
+
+            for (const existingMsh of msh3js.three.msh) {
+              if (existingMsh.group === newMshScene) continue; // Don't check against itself
+
+              const foundHpWeapons = existingMsh.group.getObjectByName('hp_weapons');
+              if (foundHpWeapons) {
+                hpWeapons = foundHpWeapons;
+                parentMshGroup = existingMsh.group;
+                break; // Found it, stop searching
+              }
+            }
+
+            if (hpWeapons) {
+              if (msh3js.debug) console.log(`processFiles::Found "hp_weapons" in ${parentMshGroup.name}. Attaching ${newMshData.fileName}.`);
+
+              // Ensure world matrices are up-to-date before calculations
+              msh3js.three.scene.updateMatrixWorld(true);
+
+              // Get the world matrices of the hardpoints
+              const hpWeaponsMatrix = hpWeapons.matrixWorld.clone();
+              const hpActiveMatrix = hpActive.matrixWorld.clone();
+
+              // Calculate the transformation to align hp_active to hp_weapons
+              // M = T_weapon * T_active_inverse
+              const alignMatrix = new THREE.Matrix4().multiplyMatrices(hpWeaponsMatrix, hpActiveMatrix.invert());
+
+              // Apply this alignment to the new mesh's current world matrix
+              newMshScene.matrix.premultiply(alignMatrix);
+              newMshScene.matrix.decompose(newMshScene.position, newMshScene.quaternion, newMshScene.scale);
+              hpWeapons.attach(newMshScene);
+            }
+          }
+        }
+
+        // After adding the scene, traverse it to find a SkinnedMesh and create a SkeletonHelper
+        if (mshFilesToProcess.length > 0) {
+          for (const msh of msh3js.three.msh) {
+            if (msh3js.three.skeletonHelper) break; // A helper already exists.
+            msh.group.traverse((child) => {
+              // Create one helper for the first SkinnedMesh found
+              if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
+                msh3js.three.scene.updateMatrixWorld(true);
+                const helper = new THREE.SkeletonHelper(child);
+                helper.name = "skeletonHelper";
+                helper.visible = msh3js.options.showSkeleton;
+                msh3js.three.scene.add(helper);
+                msh3js.three.skeletonHelper = helper;
+              }
+            });
+          }
+        }
         fileProcessed = true;
         fileObj.processed = true; // Mark as processed
-      }
-
-      // After loading, check for hardpoint attachments
-      for (const newMshData of mshFilesToProcess) {
-        const newMshScene = newMshData.group;
-        const hpActive = newMshScene.getObjectByName('hp_active');
-
-        if (hpActive) {
-          if (msh3js.debug) console.log(`processFiles::Found "hp_active" in ${newMshData.fileName}`);
-
-          // Search for 'hp_weapons' in all other loaded meshes
-          let hpWeapons = null;
-          let parentMshGroup = null;
-
-          for (const existingMsh of msh3js.three.msh) {
-            if (existingMsh.group === newMshScene) continue; // Don't check against itself
-
-            const foundHpWeapons = existingMsh.group.getObjectByName('hp_weapons');
-            if (foundHpWeapons) {
-              hpWeapons = foundHpWeapons;
-              parentMshGroup = existingMsh.group;
-              break; // Found it, stop searching
-            }
-          }
-
-          if (hpWeapons) {
-            if (msh3js.debug) console.log(`processFiles::Found "hp_weapons" in ${parentMshGroup.name}. Attaching ${newMshData.fileName}.`);
-
-            // Ensure world matrices are up-to-date before calculations
-            msh3js.three.scene.updateMatrixWorld(true);
-
-            // Get the world matrices of the hardpoints
-            const hpWeaponsMatrix = hpWeapons.matrixWorld.clone();
-            const hpActiveMatrix = hpActive.matrixWorld.clone();
-
-            // Calculate the transformation to align hp_active to hp_weapons
-            // M = T_weapon * T_active_inverse
-            const alignMatrix = new THREE.Matrix4().multiplyMatrices(hpWeaponsMatrix, hpActiveMatrix.invert());
-
-            // Apply this alignment to the new mesh's current world matrix
-            newMshScene.matrix.premultiply(alignMatrix);
-            newMshScene.matrix.decompose(newMshScene.position, newMshScene.quaternion, newMshScene.scale);
-            hpWeapons.attach(newMshScene);
-          }
-        }
-      }
-
-      // After adding the scene, traverse it to find a SkinnedMesh and create a SkeletonHelper
-      if (mshFilesToProcess.length > 0) {
-        for (const msh of msh3js.three.msh) {
-          if (msh3js.three.skeletonHelper) break; // A helper already exists.
-          msh.group.traverse((child) => {
-            // Create one helper for the first SkinnedMesh found
-            if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
-              msh3js.three.scene.updateMatrixWorld(true);
-              const helper = new THREE.SkeletonHelper(child);
-              helper.name = "skeletonHelper";
-              helper.visible = msh3js.options.showSkeleton;
-              msh3js.three.scene.add(helper);
-              msh3js.three.skeletonHelper = helper;
-            }
-          });
-        }
+        msh3js.updateLoadingBar();
       }
     }
 
@@ -1790,6 +1685,7 @@ const msh3js = {
             }
           }
         }
+        msh3js.updateLoadingBar();
         optionFileObj.processed = true; // Mark as processed
         fileProcessed = true;
       }
@@ -2088,9 +1984,10 @@ const msh3js = {
                   }
                 }
               }
-              fileObj.processed = true; // Mark as processed
-              fileProcessed = true;
             }
+            fileObj.processed = true; // Mark as processed
+            fileProcessed = true;
+            msh3js.updateLoadingBar();
           } catch (error) {
             console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
           }
@@ -2174,8 +2071,8 @@ const msh3js = {
       msh3js.three.dirLightHelper2.visible = msh3js.options.enableDirLightHelper2;
       msh3js.three.scene.add(msh3js.three.dirLightHelper2);
     }
-    // Reconstruct Tweakpane pane if already present
-    if (msh3js.pane != null) await msh3js.initTweakpane(true);
+    // Refresh Tweakpane pane if already present
+    if (msh3js.pane != null) await msh3js.initTweakpane();
     if (msh3js.debug) console.log("processFiles::Files processed:", msh3js._files);
 
     // Cleanup URLs after loading is complete
@@ -2184,36 +2081,13 @@ const msh3js = {
       fileObj.url = null;
     }
 
+    msh3js.hideLoadingBar();
     // Return true if at least one file was processed
     return fileProcessed;
   },
 
-  // Call necessary functions on input files
-  async handleFileInput(e) {
-    const files = e.target.files;
-    if (msh3js.debug) console.log("handleFileInput::Files selected:", files);
-    msh3js.addFiles(files);
-    await msh3js.processFiles(msh3js._files)
-  },
-  // Handles the file input for the background image
-  async handleBackgroundImageInput(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const fileURL = URL.createObjectURL(file);
-    msh3js.loadAndSetBackground(fileURL, file.name.toLowerCase());
-  },
-
-  // Handles the file input for animation-only MSH files
-  async handleAnimationFileInput(e) {
-    const files = e.target.files;
-    if (msh3js.debug) console.log("handleAnimationFileInput::Files selected:", files);
-    if (files.length > 0) {
-      await msh3js.importAnimations(files);
-    }
-  },
-
   // Get launch fileHandles from launchQueue and populate msh3js.files
+  /* deprecated
   async getLaunchFiles() {
     if (!window.launchQueue) {
       if (msh3js.debug) console.log("getLaunchFiles::launchQueue API not supported.");
@@ -2221,22 +2095,22 @@ const msh3js = {
     }
 
     return new Promise(resolve => {
-      let promiseResolved = false;
+      let timeoutId = null;
 
       // Set a small timeout to resolve the promise if no files are launched.
       // This prevents the app from hanging on a normal launch.
-      setTimeout(() => {
-        if (!promiseResolved) {
-          if (msh3js.debug) console.log("getLaunchFiles::No launch files detected within timeout.");
-          promiseResolved = true;
-          resolve(false);
-        }
+      timeoutId = setTimeout(() => {
+        if (msh3js.debug) console.log("getLaunchFiles::No launch files detected within timeout.");
+        resolve(false);
       }, 250); // A short delay is enough to catch a file-based launch.
 
       window.launchQueue.setConsumer(async (launchParams) => {
-        if (launchParams.files && launchParams.files.length > 0 && !promiseResolved) {
+        // If the consumer is called, we have launch files.
+        // Clear the timeout so it doesn't also try to resolve the promise.
+        if (timeoutId) clearTimeout(timeoutId);
+
+        if (launchParams.files && launchParams.files.length > 0) {
           if (msh3js.debug) console.log("getLaunchFiles::App launched with files:", launchParams.files);
-          promiseResolved = true;
 
           const files = [];
           for (const fileHandle of launchParams.files) {
@@ -2250,184 +2124,7 @@ const msh3js = {
       });
     });
   },
-
-  // Get client device graphics features support for web apis, reverse depth, anti-aliasing
-  async getSupportedGraphicsFeatures(canvases = null) {
-    let webglCanvas;
-    let webgl2Canvas;
-
-    if (canvases) {
-      // Get passed canvases if present
-      if (canvases.webglCanvas) webglCanvas = canvases.webglCanvas;
-      else
-        webglCanvas = msh3js.createCanvas({
-          id: "webglCanvas",
-        }, false);
-      if (canvases.webgl2Canvas) webgl2Canvas = canvases.webgl2Canvas;
-      else
-        webgl2Canvas = msh3js.createCanvas({
-          id: "webgl2Canvas",
-        }, false);
-    } else {
-      // Create canvases if not passed
-      webglCanvas = msh3js.createCanvas({
-        id: "webglCanvas",
-      }, false);
-      webgl2Canvas = msh3js.createCanvas({
-        id: "webgl2Canvas",
-      }, false);
-    }
-
-    try {
-      // Detect WebGL Support
-      if (
-        webglCanvas.getContext("webgl") ||
-        webglCanvas.getContext("experimental-webgl")
-      ) {
-        msh3js._supportedFeatures.webGL.supported = true;
-
-        // Check for AA support in webgl
-        let gl = webglCanvas.getContext("webgl", { antialias: true });
-        if (gl) {
-          const att = gl.getContextAttributes();
-          msh3js._supportedFeatures.webGL.aa = att.antialias === true;
-          msh3js._supportedFeatures.webGL.maxSamples = 2;
-        } else {
-          gl = webglCanvas.getContext("webgl", { antialias: false });
-        }
-
-        // Check for reverse depth buffer support
-        const extClipControl = gl.getExtension("EXT_clip_control");
-        if (extClipControl) msh3js._supportedFeatures.webGL.reverseDepth = true;
-
-        // Check for loseContext support
-        const extLoseContext = gl.getExtension("WEBGL_lose_context");
-        gl.finish(); // Let browser know we're done with this context
-        try {
-          if (extLoseContext) extLoseContext.loseContext();
-        } catch (e) { } finally { gl = null; } // Release context
-      }
-    } catch (e) {
-      if (msh3js.debug)
-        console.error("getSupportedGraphicsFeatures::WebGL error: ", e);
-    } finally {
-      if (msh3js.debug)
-        console.log(
-          "getSupportedGraphicsFeatures::WebGL support:",
-          msh3js._supportedFeatures.webGL.supported,
-          "\nWebGL AA support:",
-          msh3js._supportedFeatures.webGL.aa,
-          "\nWebGL Reverse depth buffer support:",
-          msh3js._supportedFeatures.webGL.reverseDepth
-        );
-    }
-
-    try {
-      // Detect WebGL2 Support
-      if (webgl2Canvas.getContext("webgl2")) {
-        msh3js._supportedFeatures.webGL2.supported = true;
-        msh3js._supportedFeatures.webGL2.reverseDepth = true;
-
-        // Check for AA support in webgl2 and get max samples
-        let gl2 = webgl2Canvas.getContext("webgl2", { antialias: true });
-        if (gl2) {
-          const att = gl2.getContextAttributes();
-          msh3js._supportedFeatures.webGL2.aa = att.antialias === true;
-          msh3js._supportedFeatures.webGL2.maxSamples = gl2.getParameter(gl2.MAX_SAMPLES);
-        } else {
-          msh3js._supportedFeatures.webGL2.aa = false;
-          gl2 = webgl2Canvas.getContext("webgl2", { antialias: false });
-        }
-        const extLoseContext = gl2.getExtension("WEBGL_lose_context");
-        gl2.finish(); // Finished with this context
-        try {
-          if (extLoseContext) extLoseContext.loseContext();
-        } catch (e) { } finally { gl2 = null; } // Release context
-      }
-    } catch (e) {
-      if (msh3js.debug)
-        console.error("getSupportedGraphicsFeatures::WebGL2 error: ", e);
-    } finally {
-      if (msh3js.debug)
-        console.log(
-          "getSupportedGraphicsFeatures::WebGL2 support:",
-          msh3js._supportedFeatures.webGL2.supported,
-          "\nWebGL2 AA support:",
-          msh3js._supportedFeatures.webGL2.aa,
-          "\nWebGL2 max AA samples:",
-          msh3js._supportedFeatures.webGL2.maxSamples,
-        );
-    }
-    webglCanvas = null;
-    webgl2Canvas = null;
-
-    // AA sample count options for each API
-    msh3js._supportedFeatures.webGL.sampleCountOptions = [{ text: "Disabled", value: 0 }];
-    msh3js._supportedFeatures.webGL2.sampleCountOptions = [{ text: "Disabled", value: 0 }];
-
-    if (msh3js._supportedFeatures.webGL.aa === true)
-      msh3js._supportedFeatures.webGL.sampleCountOptions.push({ text: "2x", value: 2 });
-
-    if (msh3js._supportedFeatures.webGL2.aa === true)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "2x", value: 2 });
-
-    if (msh3js._supportedFeatures.webGL2.maxSamples >= 4)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "4x", value: 4 });
-
-    if (msh3js._supportedFeatures.webGL2.maxSamples >= 8)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "8x", value: 8 });
-
-    if (msh3js._supportedFeatures.webGL2.maxSamples >= 16)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "16x", value: 16 });
-
-  },
-
-  // Get persistent storage support
-  async getPersistentStorageSupport() {
-    // Check for persistent storage
-    if (window.navigator.storage && window.navigator.storage.persisted) {
-      const allowed = await window.navigator.storage.persisted();
-      if (msh3js.debug)
-        console.log(
-          "getPersistentStorageSupport::Persistent Storage allowed:",
-          allowed
-        );
-      const persists = await window.navigator.storage.persist();
-      msh3js._supportedFeatures.persistentStorage = persists;
-      if (msh3js.debug)
-        console.log(
-          "getPersistentStorageSupport::Persistent Storage enabled:",
-          persists
-        );
-    }
-  },
-
-  // Create HTML canvas element for DOM and return it
-  createCanvas(params, inject = false) {
-    if (!params.id) params.id = "canvas";
-    if (!params.width) params.width = 64;
-    if (!params.height) params.height = 64;
-
-    const newCanvas = document.createElement("canvas");
-    newCanvas.id = params.id;
-    newCanvas.width = params.width;
-    newCanvas.height = params.height;
-    if (msh3js.debug)
-      console.log(
-        "createCanvas::New canvas created:",
-        newCanvas.id,
-        "with size:",
-        newCanvas.width,
-        "x",
-        newCanvas.height
-      );
-    if (inject === true) {
-      msh3js._appContainer.appendChild(newCanvas);
-      if (msh3js.debug)
-        console.log("createCanvas::Canvas injected into _appContainer.");
-    }
-    return newCanvas;
-  },
+  */
 
   // Create renderer using passed params and return it along with its context and canvas
   async createRenderer(
@@ -2443,7 +2140,7 @@ const msh3js = {
     }
   ) {
     if (params.renderingAPI == null) params.renderingAPI = msh3js._supportedFeatures.webGL2.supported ? "webgl2" : "webgl";
-    if (params.size == null) params.size = msh3js.size ?? { width: 64, height: 64 };
+    if (params.size == null) params.size = msh3js.size ?? { width: 1, height: 1 };
     if (params.pixelRatio == null) params.pixelRatio = msh3js.options.pixelRatio ?? 1.0;
     if (params.GPU == null) params.GPU = msh3js.options.preferredGPU ?? "default";
     if (params.AA == null) params.AA = msh3js.options.aa ?? false;
@@ -2510,57 +2207,93 @@ const msh3js = {
 
   // Recreates the renderer, canvas, and related components
   async recreateRenderer() {
-    if (msh3js.debug)
-      console.log("recreateRenderer::Recreating renderer...");
     // Nullify the animation loop
     if (msh3js.three.renderer) msh3js.three.renderer.setAnimationLoop(null);
+    if (msh3js.debug) console.log("recreateRenderer::Animation loop nullified.");
     // Remove and nullify stats
     await msh3js.initStats(false);
+    if (msh3js.debug) console.log("recreateRenderer::Stats removed.");
     // Dispose of viewHelper
     if (msh3js.three.viewHelper) {
       msh3js.three.viewHelper.dispose();
       msh3js.three.viewHelper = null;
+      if (msh3js.debug) console.log("recreateRenderer::ViewHelper disposed.");
     }
     // Nullify orbitControls
     if (msh3js.three.orbitControls) {
       msh3js.three.orbitControls.dispose();
       msh3js.three.orbitControls = null;
+      if (msh3js.debug) console.log("recreateRenderer::OrbitControls disposed.");
     }
-    // Dispose of renderer and context
+    // Dispose of renderer
     if (msh3js.three.renderer) {
       msh3js.three.renderer.dispose();
       msh3js.three.renderer = null;
+      if (msh3js.debug) console.log("recreateRenderer::Renderer disposed.");
     }
+    // Release context
     if (msh3js.context) {
-      const extLoseContext = msh3js.context.getExtension("WEBGL_lose_context");
-      try {
-        if (extLoseContext) extLoseContext.loseContext();
-      } catch (e) {
-        console.error("recreateRenderer::Error losing context:", e);
-      } finally {
-        msh3js.context = null;
-      }
+      msh3js.context.finish();
+      msh3js.context = null;
     }
-    if (msh3js.canvas && msh3js._appContainer.contains(msh3js.canvas)) {
+    if (msh3js.debug) console.log("recreateRenderer::Context released.");
+
+    // Remove and nullify canvas
+    if (msh3js.canvas) {
+      msh3js.manageListeners("remove", "fileDropCanvas");
       msh3js._appContainer.removeChild(msh3js.canvas);
       msh3js.canvas = null;
+      if (msh3js.debug) console.log("recreateRenderer::Canvas removed from DOM.");
     }
+
     // Create and inject new canvas into the DOM
     msh3js.canvas = msh3js.createCanvas({
       id: "msh3jsCanvas",
       width: msh3js.size.width,
       height: msh3js.size.height,
     }, true);
+    msh3js.canvas.style.width = "100%";
+    msh3js.canvas.style.height = "100%";
+    msh3js.resize();
+    msh3js.manageListeners("add", "fileDropCanvas");
+    if (msh3js.debug) console.log("recreateRenderer::New canvas created and injected.");
 
     await msh3js.initThree();
+    if (msh3js.debug) console.log("recreateRenderer::Three re-initialized.");
     msh3js.three.renderer.setAnimationLoop(msh3js.render);
+    if (msh3js.debug) console.log("recreateRenderer::Animation loop set.");
     await msh3js.initStats(msh3js.options.showStats);
-    if (msh3js.three.msh.length > 1)
-      msh3js.frameCamera(); // Frame entire scene if multiple msh files are imported
-    else if (msh3js.three.msh.length > 0)
-      msh3js.frameCamera(msh3js.three.msh.at(-1).group);
+    if (msh3js.debug) console.log("recreateRenderer::Stats re-initialized.");
+
     if (msh3js.debug)
       console.log("recreateRenderer::Renderer recreated.");
+  },
+
+  // Create HTML canvas element for DOM and return it
+  createCanvas(params, inject = false) {
+    if (!params.id) params.id = "canvas";
+    if (!params.width) params.width = 1;
+    if (!params.height) params.height = 1;
+
+    const newCanvas = document.createElement("canvas");
+    newCanvas.id = params.id;
+    newCanvas.width = params.width;
+    newCanvas.height = params.height;
+    if (msh3js.debug)
+      console.log(
+        "createCanvas::New canvas created:",
+        newCanvas.id,
+        "with size:",
+        newCanvas.width,
+        "x",
+        newCanvas.height
+      );
+    if (inject === true) {
+      msh3js._appContainer.appendChild(newCanvas);
+      if (msh3js.debug)
+        console.log("createCanvas::Canvas injected into _appContainer.");
+    }
+    return newCanvas;
   },
 
   // Create and assign Three.js scene
@@ -2645,59 +2378,14 @@ const msh3js = {
     return msh3js.three.scene;
   },
 
-  // Calculate directional light positions
-  calculateLightPosition(dirLight = null, azimuth = null, elevation = null) {
-    // Determine which light to use if not specified
-    const lightToUpdate = dirLight ?? msh3js.three.dirLight ?? msh3js.three.dirLight2;
-    if (!lightToUpdate) return;
-
-    // Use the correct options based on which light is being updated
-    if (lightToUpdate === msh3js.three.dirLight) {
-      azimuth = azimuth ?? msh3js.options.dirLightAzimuth;
-      elevation = elevation ?? msh3js.options.dirLightElevation;
-    } else if (lightToUpdate === msh3js.three.dirLight2) {
-      azimuth = azimuth ?? msh3js.options.dirLight2Azimuth;
-      elevation = elevation ?? msh3js.options.dirLight2Elevation;
-    }
-
-    // Calculate the total bounding box of all loaded MSH objects to correctly position the light
-    const totalBoundingBox = new THREE.Box3();
-    if (msh3js.three.msh.length > 0) {
-      for (const msh of msh3js.three.msh) {
-        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
-        if (!mshBBox.isEmpty()) {
-          totalBoundingBox.union(mshBBox);
-        }
-      }
-    }
-
-    const sceneSphere = totalBoundingBox.getBoundingSphere(new THREE.Sphere());
-    const center = sceneSphere.center;
-    const radius = sceneSphere.radius > 0 ? sceneSphere.radius : 10; // Use a default radius if scene is empty
-    const distance = radius * 1.5; // Position the light 1.5x the scene radius away from the center
-    // Convert to radians and calculate light position
-    const phi = THREE.MathUtils.degToRad(90 - elevation);
-    const theta = THREE.MathUtils.degToRad(azimuth);
-    const x = (distance * Math.sin(phi) * Math.cos(theta)) + center.x;
-    const y = (distance * Math.cos(phi)) + center.y;
-    const z = (distance * Math.sin(phi) * Math.sin(theta)) + center.z;
-    // Set light positions if present
-    if (lightToUpdate) {
-      lightToUpdate.position.set(x, y, z);
-      if (msh3js.three.dirLightHelper) msh3js.three.dirLightHelper.update();
-      if (msh3js.three.dirLightHelper2) msh3js.three.dirLightHelper2.update();
-    }
-  },
-
   // Create and assign Three.js camera
-  // TODO: Adjust based on scene size
   createCamera() {
     const aspect = (msh3js.size.width > 0 && msh3js.size.height > 0) ? (msh3js.size.width / msh3js.size.height) : 1;
     msh3js.three.camera = new THREE.PerspectiveCamera(
       75, // fov
       aspect, // aspect ratio
       0.1, // near plane
-      10000 // far plane
+      100 // far plane
     ); // Create a new Three.JS camera
     msh3js.three.camera.position.set(0, 1, 5); // Set camera position
     // Initialize properties for cubecam optimization
@@ -2765,12 +2453,23 @@ const msh3js = {
     msh3js.three.camera.lookAt(center);
     if (msh3js.three.orbitControls) {
       msh3js.three.orbitControls.target.copy(center);
+
+      // Calculate the radius of a sphere that encloses the entire bounding box.
+      const boxRadius = target.getSize(new THREE.Vector3()).length() / 2;
+
+      // Set the orbit controls' zoom limits first.
+      // minDistance is the closest the camera can get to the object's center.
+      // We set it to be just outside the bounding box radius.
+      msh3js.three.orbitControls.minDistance = boxRadius * 0.1;
+      msh3js.three.orbitControls.maxDistance = distance * 10; // Allow zooming out 10x from the framed position.
+
+      // Now, set the camera's clipping planes based on the full zoom range.
+      // The near plane must be closer than the closest zoom point.
+      msh3js.three.camera.near = Math.max(0.1, msh3js.three.orbitControls.minDistance - boxRadius);
+      // The far plane must be further than the furthest zoom point.
+      msh3js.three.camera.far = msh3js.three.orbitControls.maxDistance + boxRadius;
+
       msh3js.three.orbitControls.update();
-      // Dynamically adjust near and far planes based on the new camera distance.
-      msh3js.three.camera.near = Math.max(0.1, distance / 100);
-      msh3js.three.camera.far = distance * 100; // Set far plane to be 4x the camera distance.
-      msh3js.three.orbitControls.minDistance = msh3js.three.camera.near * 1.05;
-      msh3js.three.orbitControls.maxDistance = msh3js.three.camera.far * 0.95;
     }
     msh3js.three.camera.updateProjectionMatrix(); // Apply new near/far planes
 
@@ -2912,40 +2611,16 @@ const msh3js = {
     msh3js.three.loadingManager = new THREE.LoadingManager();
     // Set up loading manager events
     msh3js.three.loadingManager.onStart = function (url, items, total) {
-      if (msh3js._loadingBar.container) {
-        msh3js._loadingBar.container.style.display = 'flex';
-      }
-      if (msh3js.debug)
-        console.log(
-          "LoadingManager::Started loading:",
-          url,
-          " for ",
-          total,
-          "items."
-        );
+      if (msh3js.debug) console.log("LoadingManager::Started loading:", url, " for ", total, "items.");
     };
     msh3js.three.loadingManager.onProgress = function (url, loaded, total) {
-      const progress = loaded / total;
-      const spheresToShow = Math.ceil(progress * msh3js._loadingBar.spheres.length);
-      msh3js._loadingBar.spheres.forEach((sphere, index) => {
-        sphere.style.opacity = index < spheresToShow ? '1.0' : '0.2';
-      });
-      if (msh3js.debug)
-        console.log(
-          "LoadingManager::In progress:",
-          url,
-          " : " + loaded + " / " + total
-        );
+      if (msh3js.debug) console.log("LoadingManager::In progress:", url, " : " + loaded + " / " + total);
     };
     msh3js.three.loadingManager.onLoad = function () {
-      if (msh3js._loadingBar.container) {
-        msh3js._loadingBar.container.style.display = 'none';
-      }
       if (msh3js.debug) console.log("LoadingManager::Finished!");
     };
     msh3js.three.loadingManager.onError = function (url) {
-      if (msh3js.debug)
-        console.error("LoadingManager::Error!", url);
+      if (msh3js.debug) console.error("LoadingManager::Error!", url);
     };
 
     // Instantiate texture, tga, and msh model loaders w/our loadingManager
@@ -2969,12 +2644,25 @@ const msh3js = {
       fileInput.accept = ".msh,.tga,.msh.option";
       msh3js._appContainer.appendChild(fileInput);
       msh3js._fileInput = fileInput;
+      if (msh3js.debug) console.log("createFileInput::File input created: ", fileInput);
       msh3js.manageListeners("add", "fileInput");
-
-    } catch (e) { console.error("createFileInput::Error creating file input:", e); }
-    if (msh3js.debug)
-      console.log("createFileInput::File input created: ", fileInput);
+    } catch (e) { console.error("createFileInput::Error creating file input:", e); return null; }
     return fileInput;
+  },
+
+  // Call necessary functions on input files
+  async handleFileInput(e) {
+    const files = e.target.files;
+    if (msh3js.debug) console.log("handleFileInput::Files selected:", files);
+    msh3js.addFiles(files);
+    await msh3js.processFiles(msh3js._files)
+  },
+
+  // Click file input
+  clickFileInput(e) {
+    const fileInput = msh3js._fileInput ?? document.getElementById("fileInput") ?? msh3js.createFileInput();
+    if (fileInput)
+      fileInput.click();
   },
 
   // Creates a hidden file input specifically for importing animations
@@ -2992,6 +2680,15 @@ const msh3js = {
       animFileInput.addEventListener("change", msh3js.handleAnimationFileInput);
     } catch (e) { console.error("createAnimationFileInput::Error creating file input:", e); }
     return animFileInput;
+  },
+
+  // Handles the file input for animation-only MSH files
+  async handleAnimationFileInput(e) {
+    const files = e.target.files;
+    if (msh3js.debug) console.log("handleAnimationFileInput::Files selected:", files);
+    if (files.length > 0) {
+      await msh3js.importAnimations(files);
+    }
   },
 
   // Create and append HTML file input for background image
@@ -3014,6 +2711,15 @@ const msh3js = {
     return bgFileInput;
   },
 
+  // Handles the file input for the background image
+  async handleBackgroundImageInput(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const fileURL = URL.createObjectURL(file);
+    msh3js.loadAndSetBackground(fileURL, file.name.toLowerCase());
+  },
+
   // Generates an AA control for tweakpane
   generateAAControl(sampleCountOptions = null, renderingFolder = null) {
     if (sampleCountOptions && renderingFolder) {
@@ -3031,15 +2737,61 @@ const msh3js = {
           // Recreate canvas/context with new parameters
           await msh3js.recreateRenderer();
           if (msh3js.options.sampleCount > 0) {
-            for (const material of msh3js.three.msh.at(-1).materials) {
-              if (material.transparent) {
-                material.three.alphaToCoverage = true;
-                material.three.needsUpdate = true;
+            if (msh3js.three.msh.length > 0) {
+              for (const material of msh3js.three.msh.at(-1).materials) {
+                if (material.transparent) {
+                  material.three.alphaToCoverage = true;
+                  material.three.needsUpdate = true;
+                }
               }
             }
           }
         });
       return aaControl;
+    }
+  },
+
+  // Calculate directional light positions
+  calculateLightPosition(dirLight = null, azimuth = null, elevation = null) {
+    // Determine which light to use if not specified
+    const lightToUpdate = dirLight ?? msh3js.three.dirLight ?? msh3js.three.dirLight2;
+    if (!lightToUpdate) return;
+
+    // Use the correct options based on which light is being updated
+    if (lightToUpdate === msh3js.three.dirLight) {
+      azimuth = azimuth ?? msh3js.options.dirLightAzimuth;
+      elevation = elevation ?? msh3js.options.dirLightElevation;
+    } else if (lightToUpdate === msh3js.three.dirLight2) {
+      azimuth = azimuth ?? msh3js.options.dirLight2Azimuth;
+      elevation = elevation ?? msh3js.options.dirLight2Elevation;
+    }
+
+    // Calculate the total bounding box of all loaded MSH objects to correctly position the light
+    const totalBoundingBox = new THREE.Box3();
+    if (msh3js.three.msh.length > 0) {
+      for (const msh of msh3js.three.msh) {
+        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
+        if (!mshBBox.isEmpty()) {
+          totalBoundingBox.union(mshBBox);
+        }
+      }
+    }
+
+    const sceneSphere = totalBoundingBox.getBoundingSphere(new THREE.Sphere());
+    const center = sceneSphere.center;
+    const radius = sceneSphere.radius > 0 ? sceneSphere.radius : 10; // Use a default radius if scene is empty
+    const distance = radius * 1.5; // Position the light 1.5x the scene radius away from the center
+    // Convert to radians and calculate light position
+    const phi = THREE.MathUtils.degToRad(90 - elevation);
+    const theta = THREE.MathUtils.degToRad(azimuth);
+    const x = (distance * Math.sin(phi) * Math.cos(theta)) + center.x;
+    const y = (distance * Math.cos(phi)) + center.y;
+    const z = (distance * Math.sin(phi) * Math.sin(theta)) + center.z;
+    // Set light positions if present
+    if (lightToUpdate) {
+      lightToUpdate.position.set(x, y, z);
+      if (msh3js.three.dirLightHelper) msh3js.three.dirLightHelper.update();
+      if (msh3js.three.dirLightHelper2) msh3js.three.dirLightHelper2.update();
     }
   },
 
@@ -3090,6 +2842,7 @@ const msh3js = {
     cubeTexture.colorSpace = THREE.SRGBColorSpace;
     return cubeTexture;
   },
+
   // Check if a texture is grayscale
   isTextureGrayscale(texture, tolerance = 5, sampleSize = 100) {
     const { data, width, height } = texture.image;
@@ -3125,6 +2878,7 @@ const msh3js = {
     // If over 90% of sampled pixels are grayscale, consider the texture grayscale.
     return (grayscalePixels / sampledPixels) > 0.9;
   },
+
   // Loads a texture and sets it as the scene background.
   async loadAndSetBackground(url, filename) {
     if (!msh3js.three.textureLoader) msh3js.createLoaders();
@@ -3589,6 +3343,301 @@ const msh3js = {
     }
     if (msh3js.pane) msh3js.pane.refresh();
     if (msh3js.debug) console.log("stopAllAnimations::All animations stopped.");
+  },
+
+  // Updates just the animation list in Tweakpane without rebuilding the whole UI.
+  updateAnimationList() {
+    if (!msh3js.pane || !msh3js.ui.animationDropdown) {
+      if (msh3js.debug) console.log("updateAnimationList:: Pane or dropdown not ready, skipping update.");
+      return;
+    }
+
+    if (msh3js.debug) console.log("updateAnimationList:: Refreshing animation dropdown.");
+
+    // Prepare the new list of options, starting with the default 'None'.
+    const newAnimOptions = [{ text: 'None', value: 'None' }];
+    const allAnimNames = new Set();
+
+    // Gather all unique animation names from all loaded MSH objects.
+    for (const msh of msh3js.three.msh) {
+      if (msh.animations && msh.animations.length > 0) {
+        for (const anim of msh.animations) {
+          allAnimNames.add(anim.name);
+        }
+      }
+    }
+
+    // Add the unique names to our options list.
+    for (const name of allAnimNames) {
+      newAnimOptions.push({ text: name, value: name });
+    }
+
+    // Update the options on the existing Tweakpane control.
+    msh3js.ui.animationDropdown.options = newAnimOptions;
+  },
+
+  // Get client device graphics features support for web apis, reverse depth, anti-aliasing
+  async getSupportedGraphicsFeatures(canvases = null) {
+    let webglCanvas;
+    let webgl2Canvas;
+
+    if (canvases) {
+      // Get passed canvases if present
+      if (canvases.webglCanvas) webglCanvas = canvases.webglCanvas;
+      else
+        webglCanvas = msh3js.createCanvas({
+          id: "webglCanvas",
+        }, false);
+      if (canvases.webgl2Canvas) webgl2Canvas = canvases.webgl2Canvas;
+      else
+        webgl2Canvas = msh3js.createCanvas({
+          id: "webgl2Canvas",
+        }, false);
+    } else {
+      // Create canvases if not passed
+      webglCanvas = msh3js.createCanvas({
+        id: "webglCanvas",
+      }, false);
+      webgl2Canvas = msh3js.createCanvas({
+        id: "webgl2Canvas",
+      }, false);
+    }
+
+    try {
+      // Detect WebGL Support
+      if (
+        webglCanvas.getContext("webgl") ||
+        webglCanvas.getContext("experimental-webgl")
+      ) {
+        msh3js._supportedFeatures.webGL.supported = true;
+
+        // Check for AA support in webgl
+        let gl = webglCanvas.getContext("webgl", { antialias: true });
+        if (gl) {
+          const att = gl.getContextAttributes();
+          msh3js._supportedFeatures.webGL.aa = att.antialias === true;
+          msh3js._supportedFeatures.webGL.maxSamples = 2;
+        } else {
+          gl = webglCanvas.getContext("webgl", { antialias: false });
+        }
+
+        // Check for reverse depth buffer support
+        const extClipControl = gl.getExtension("EXT_clip_control");
+        if (extClipControl) msh3js._supportedFeatures.webGL.reverseDepth = true;
+
+        gl.finish(); // Let browser know we're done with this context
+        gl = null; // Release context
+      }
+    } catch (e) {
+      if (msh3js.debug)
+        console.error("getSupportedGraphicsFeatures::WebGL error: ", e);
+    } finally {
+      if (msh3js.debug)
+        console.log(
+          "getSupportedGraphicsFeatures::WebGL support:",
+          msh3js._supportedFeatures.webGL.supported,
+          "\nWebGL AA support:",
+          msh3js._supportedFeatures.webGL.aa,
+          "\nWebGL Reverse depth buffer support:",
+          msh3js._supportedFeatures.webGL.reverseDepth
+        );
+    }
+
+    try {
+      // Detect WebGL2 Support
+      if (webgl2Canvas.getContext("webgl2")) {
+        msh3js._supportedFeatures.webGL2.supported = true;
+        msh3js._supportedFeatures.webGL2.reverseDepth = true;
+
+        // Check for AA support in webgl2 and get max samples
+        let gl2 = webgl2Canvas.getContext("webgl2", { antialias: true });
+        if (gl2) {
+          const att = gl2.getContextAttributes();
+          msh3js._supportedFeatures.webGL2.aa = att.antialias === true;
+          msh3js._supportedFeatures.webGL2.maxSamples = gl2.getParameter(gl2.MAX_SAMPLES);
+        } else {
+          msh3js._supportedFeatures.webGL2.aa = false;
+          gl2 = webgl2Canvas.getContext("webgl2", { antialias: false });
+        }
+
+        gl2.finish(); // Finished with this context
+        gl2 = null; // Release context
+      }
+    } catch (e) {
+      if (msh3js.debug)
+        console.error("getSupportedGraphicsFeatures::WebGL2 error: ", e);
+    } finally {
+      if (msh3js.debug)
+        console.log(
+          "getSupportedGraphicsFeatures::WebGL2 support:",
+          msh3js._supportedFeatures.webGL2.supported,
+          "\nWebGL2 AA support:",
+          msh3js._supportedFeatures.webGL2.aa,
+          "\nWebGL2 max AA samples:",
+          msh3js._supportedFeatures.webGL2.maxSamples,
+        );
+    }
+    webglCanvas = null;
+    webgl2Canvas = null;
+
+    // AA sample count options for each API
+    msh3js._supportedFeatures.webGL.sampleCountOptions = [{ text: "Disabled", value: 0 }];
+    msh3js._supportedFeatures.webGL2.sampleCountOptions = [{ text: "Disabled", value: 0 }];
+
+    if (msh3js._supportedFeatures.webGL.aa === true)
+      msh3js._supportedFeatures.webGL.sampleCountOptions.push({ text: "2x", value: 2 });
+
+    if (msh3js._supportedFeatures.webGL2.aa === true)
+      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "2x", value: 2 });
+
+    if (msh3js._supportedFeatures.webGL2.maxSamples >= 4)
+      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "4x", value: 4 });
+
+    if (msh3js._supportedFeatures.webGL2.maxSamples >= 8)
+      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "8x", value: 8 });
+
+    if (msh3js._supportedFeatures.webGL2.maxSamples >= 16)
+      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "16x", value: 16 });
+
+  },
+
+  // Get persistent storage support
+  async getPersistentStorageSupport() {
+    // Check for persistent storage
+    if (window.navigator.storage && window.navigator.storage.persisted) {
+      const allowed = await window.navigator.storage.persisted();
+      if (msh3js.debug) console.log("getPersistentStorageSupport::Persistent Storage allowed:", allowed);
+      if (allowed) {
+        const persists = await window.navigator.storage.persist();
+        msh3js._supportedFeatures.persistentStorage = persists;
+        if (msh3js.debug) console.log("getPersistentStorageSupport::Persistent Storage enabled:", persists);
+      }
+    }
+  },
+
+  // Manages listeners by group (renderTrigger, resize, fileDrop) and action (add/remove)
+  manageListeners(action, group) {
+    if (msh3js.debug) console.log("manageListeners::params::action:", action, "group:", group);
+
+    if (group === "fileDropCanvas") {
+      const dropZone = msh3js.canvas ?? msh3js._appContainer.getElementById("msh3jsCanvas") ?? msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height });
+      if (dropZone) {
+        if (action === "add") {
+          if (!msh3js._listeners.fileDrop) {
+            try {
+              dropZone.addEventListener("dragenter", msh3js.preventDrag);
+              dropZone.addEventListener("dragover", msh3js.preventDrag);
+              dropZone.addEventListener("drop", msh3js.drop);
+              msh3js._listeners.fileDrop = true;
+            } catch (e) { console.error("manageListeners::Error adding fileDrop listeners:", e); }
+          }
+        } else if (action === "remove") {
+          if (msh3js._listeners.fileDrop) {
+            try {
+              dropZone.removeEventListener("dragenter", msh3js.preventDrag);
+              dropZone.removeEventListener("dragover", msh3js.preventDrag);
+              dropZone.removeEventListener("drop", msh3js.drop);
+              msh3js._listeners.fileDrop = null;
+            } catch (e) { console.error("manageListeners::Error removing fileDrop listeners:", e); }
+          }
+        } else {
+          console.warn("manageListeners::Unknown action:", action);
+        }
+      }
+    } else if (group === "fileInput") {
+      if (action === "add") {
+        if (!msh3js._listeners.fileInput) {
+          try {
+            msh3js._fileInput.addEventListener("change", msh3js.handleFileInput);
+            msh3js._listeners.fileInput = true;
+          } catch (e) { console.error("manageListeners::Error adding fileInput listener:", e); }
+        }
+      } else if (action === "remove") {
+        if (msh3js._listeners.fileInput) {
+          try {
+            msh3js._fileInput.removeEventListener("change", msh3js.handleFileInput);
+            msh3js._listeners.fileInput = false;
+          } catch (e) { console.error("manageListeners::Error removing fileInput listener:", e); }
+        }
+      }
+    } else if (group === "resize") {
+      if (action === "add") {
+        if (!msh3js._listeners.resize) {
+          try {
+            window.addEventListener("resize", msh3js.resize);
+            msh3js._listeners.resize = true;
+          } catch (e) { console.error("manageListeners::Error adding resize listener:", e); }
+        }
+      } else if (action === "remove") {
+        if (msh3js._listeners.resize) {
+          try {
+            window.removeEventListener("resize", msh3js.resize);
+            msh3js._listeners.resize = false;
+          } catch (e) { console.error("manageListeners::Error removing resize listener:", e); }
+        }
+      } else {
+        console.warn("manageListeners::Unknown action:", action);
+      }
+    } else { console.warn("manageListeners::Unknown group:", group); }
+  },
+
+  // Prevents default drag behavior when dragging files over canvas
+  preventDrag(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  },
+
+  // Function to handle file drops on the canvas
+  async drop(e) {
+    e.stopPropagation();
+    e.preventDefault();
+    const droppedFiles = e.dataTransfer.files;
+    if (msh3js.debug) console.log("drop::Files dropped:", droppedFiles);
+    msh3js.addFiles(droppedFiles);
+    await msh3js.processFiles(msh3js._files);
+  },
+
+  // Shows a loading bar with spheres corresponding to files uploaded
+  showLoadingBar(count) {
+    if (msh3js._loadingBar.container) {
+      msh3js._loadingBar.spheresCount = count;
+      // Reset loading spheres count
+      msh3js._loadingBar.processedCount = 0;
+
+      // Clear any previous spheres
+      msh3js._loadingBar.spheres.forEach(sphere => sphere.remove());
+      msh3js._loadingBar.spheres = [];
+
+      // Dynamically create a sphere for each item being loaded
+      for (let i = 0; i < count; i++) {
+        const sphere = document.createElement('div');
+        sphere.className = 'loading-sphere';
+        msh3js._loadingBar.spheres.push(sphere);
+        msh3js._loadingBar.container.appendChild(sphere);
+      }
+      // Make loading bar container visible
+      msh3js._loadingBar.container.style.display = 'flex';
+      if (msh3js.debug) console.log(`showLoadingBar::Showing loading bar for ${count} files.`);
+    }
+  },
+
+  // Updates the loading bar progress.
+  updateLoadingBar() {
+    msh3js._loadingBar.processedCount++;
+    if (msh3js._loadingBar.spheres.length > 0) {
+      msh3js._loadingBar.spheres.forEach((sphere, index) => {
+        sphere.style.opacity = index < msh3js._loadingBar.processedCount ? '1.0' : '0.1';
+      });
+    }
+    if (msh3js.debug) console.log(`updateLoadingBar::Progress: ${msh3js._loadingBar.processedCount}/${msh3js._loadingBar.spheresCount}`);
+  },
+
+  // Hides the loading bar.
+  hideLoadingBar() {
+    if (msh3js._loadingBar.container) {
+      msh3js._loadingBar.container.style.display = 'none';
+    }
+    if (msh3js.debug) console.log("hideLoadingBar::Hiding loading bar.");
   },
 
   // Makes an HTML element draggable.
