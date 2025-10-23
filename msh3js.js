@@ -365,7 +365,7 @@ const msh3js = {
     // Get/create tweakpane panel container (div)
     let tweakpaneContainer = null;
     // Only do this if not explicitly disabled
-    if (options.displayTweakpane === true || options.displayTweakpane === null) {
+    if (options.displayTweakpane !== false) {
       tweakpaneContainer = document.getElementById("tweakpaneContainer");
       if (!tweakpaneContainer) {
         tweakpaneContainer = document.createElement("div");
@@ -3731,6 +3731,7 @@ const msh3js = {
       // This listener should only run once per mousedown, so remove it immediately.
       element.removeEventListener('click', onClickCapture, { capture: true });
     };
+    if (msh3js.debug) console.log("makeDraggable::Element is now draggable:", element);
   },
 
   // Makes an HTML element resizable from its right edge.
@@ -3793,6 +3794,7 @@ const msh3js = {
     // Listen for mouse movement over the element to change the cursor.
     element.addEventListener('mousemove', onMouseMoveCursor);
     element.addEventListener('mousedown', onMouseDown);
+    if (msh3js.debug) console.log("makeResizable::Element is now resizable:", element);
   },
 };
 
