@@ -5,6 +5,7 @@
 
 // Module Imports -----------------------------------------------------------
 import * as THREE from "three";
+//import WebGPURenderer from "three/addons/renderers/webgpu/WebGPURenderer.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { MSHLoader } from "MSHLoader";
 import { TGALoader } from "three/addons/loaders/TGALoader.js";
@@ -34,10 +35,10 @@ const msh3js = {
     dirLightIntensity: 1.0, // Directional light intensity
     dirLightAzimuth: 90.0, // Directional light azimuth (Rotation in degrees by Y axis)
     dirLightElevation: 30.0, // Directional light elevation (Rotation in degrees by X axis)
-    dirLight2Color: "#ffffff",
+    dirLight2Color: "#ffffff", // Secondary directional light color
     dirLight2Intensity: 0.0, // Disable secondary directional light by default
-    dirLight2Azimuth: 270.0, // Set opposite orientation as dirLight1
-    dirLight2Elevation: -30.0,
+    dirLight2Azimuth: 270.0, // Set opposite orientation as dirLight1 by default
+    dirLight2Elevation: -30.0, // Set opposite of dirLight1 by default
     ambLightColor: "#4d4d4d", // Ambient light color
     ambLightIntensity: 1.0, // Ambient light intensity
     enableViewHelper: false, // Visibility of view helper
@@ -108,16 +109,17 @@ const msh3js = {
     // Camera state for cubecam optimization
     lastCameraPosition: null,
     lastCameraQuaternion: null,
+    // Pre-compiled lists for render loop optimization
+    dynamic: {
+      scrollingMaterials: [],
+      animatedMaterials: [],
+      pulsatingMaterials: [],
+      refractiveMeshes: [],
+      clothMeshes: [],
+    },
   },
   // Proxy object(s) for tweakpane to decouple from three
   ui: {
-    mshName: "Click to upload",
-    mshSize: 0,
-    mshLastModified: "",
-    models: [],
-    materials: [],
-    missingTextures: [],
-    sceneName: "",
     animations: [],
     currentAnimation: 'None',
     animationSpeed: 1.0,
@@ -139,13 +141,20 @@ const msh3js = {
   pane: null,
   // App size
   size: null,
-  // Splashscreen svg
-  splashScreen: null,
   // App listener flags
   _listeners: {
     fileDrop: null,
     fileInput: null,
     resize: null,
+    serviceWorker: null,
+    tweakpaneClick: null,
+    animFileInput: null,
+    bgFileInput: null,
+    draggable: new Map(), // Use a Map to track listeners for multiple draggable elements
+    resizable: new Map(), // Use a Map to track listeners for multiple resizable elements
+    dragMove: null, // For document-level drag listeners
+    dragClickCapture: null, // For the temporary click capture during a drag
+    resizeMove: null,
   },
   // (HTML div) container for app and canvas
   _appContainer: null,
@@ -170,17 +179,22 @@ const msh3js = {
   _fileInput: null,
   // Client capabilities
   _supportedFeatures: {
-    webGL: { supported: false, aa: false, maxSamples: 0, reverseDepth: false, sampleCountOptions: [] }, // WebGL support flag
-    webGL2: { supported: false, aa: false, maxSamples: 0, reverseDepth: true, sampleCountOptions: [] }, // WebGL2 support flag
+    webgl: { supported: false, aa: false, maxSamples: 0, reverseDepth: false, sampleCountOptions: [] }, // WebGL support flag
+    webgl2: { supported: false, aa: false, maxSamples: 0, reverseDepth: true, sampleCountOptions: [] }, // WebGL2 support flag
+    webgpu: { supported: false, aa: false, maxSamples: 0, reverseDepth: true, sampleCountOptions: [] }, // WebGPU support flag
     localStorage: false, // LocalStorage support flag
     persistentStorage: false, // PersistentStorage support flag
     serviceWorker: false, // ServiceWorker support flag
   },
   // Reverse depth buffer flag (for large geometries)
   _useReverseDepth: false,
+  // State for draggable elements, keyed by the element itself
+  _draggableStates: new Map(),
+  // State for resizable elements, keyed by the element itself
+  _resizableStates: new Map(),
 
   // Initializes app state and populates msh3js object
-  async initApp(params) {
+  async initApp(params, options = {}) {
     if (msh3js.debug) console.log("initApp::params:", params);
     // Store params for startThree from processFiles (launch files)
     msh3js.params = params;
@@ -197,9 +211,9 @@ const msh3js = {
       }
     }
 
+    let msh3jsOptions = null;
     // Update options object from localStorage (User preferences)
     if (msh3js._supportedFeatures.localStorage) {
-      let msh3jsOptions = null;
       try {
         msh3jsOptions = localStorage.getItem("msh3js_options");
         if (msh3jsOptions) {
@@ -218,33 +232,72 @@ const msh3js = {
     msh3js._loadingBar.container = params.loadingContainer;
 
     // Process passed app options (Overrides options from localStorage if present)
-    // TODO: Finish to allow override of all saved options
-    if (params.AA != null) msh3js.options.aa = params.AA;
-    if (params.AAsampleCount != null) msh3js.options.sampleCount = params.AAsampleCount;
-    if (params.autoRotate != null) msh3js.options.autoRotate = params.autoRotate;
-    if (params.autoRotateSpeed != null) msh3js.options.autoRotateSpeed = params.autoRotateSpeed;
-    if (params.backgroundColor != null) msh3js.options.backgroundColor = params.backgroundColor;
-    if (params.backgroundImage != null) msh3js.options.backgroundImage = params.backgroundImage;
-    if (params.controlDamping != null) msh3js.options.controlDamping = params.controlDamping;
-    if (params.displayHelpers != null) {
-      msh3js.options.enableDirLightHelper = params.displayHelpers;
-      msh3js.options.enableDirLightHelper2 = params.displayHelpers;
-      msh3js.options.enableViewHelper = params.displayHelpers;
-      msh3js.options.enableGrid = params.displayHelpers;
-      msh3js.options.showSkeleton = params.displayHelpers;
+    if (options.AA != null) msh3js.options.aa = options.AA;
+    if (options.AAsampleCount != null) msh3js.options.sampleCount = options.AAsampleCount;
+    if (options.AAsampleCount != null) msh3js.options.aa = options.AAsampleCount > 0;
+    if (options.ambLightColor != null) msh3js.options.ambLightColor = options.ambLightColor;
+    if (options.ambLightIntensity != null) msh3js.options.ambLightIntensity = options.ambLightIntensity;
+    if (options.autoRotate != null) msh3js.options.autoRotate = options.autoRotate;
+    if (options.autoRotateSpeed != null) msh3js.options.autoRotateSpeed = options.autoRotateSpeed;
+    if (options.backgroundColor != null) msh3js.options.backgroundColor = options.backgroundColor;
+    if (options.backgroundImage != null) msh3js.options.backgroundImage = options.backgroundImage;
+    if (options.bloom) {
+      if (options.bloom.enabled != null) msh3js.options.bloomEnabled = options.bloom.enabled;
+      if (options.bloom.threshold != null) msh3js.options.bloomThreshold = options.bloom.threshold;
+      if (options.bloom.strength != null) msh3js.options.bloomStrength = options.bloom.strength;
+      if (options.bloom.radius != null) msh3js.options.bloomRadius = options.bloom.radius;
     }
-    if (params.displayShadows != null) msh3js.options.enableShadows = params.displayShadows;
-    if (params.displayStats != null) msh3js.options.showStats = params.displayStats;
-    if (params.GPU != null) msh3js.options.preferredGPU = params.GPU;
-    if (params.pixelRatio != null) msh3js.options.pixelRatio = params.pixelRatio;
-    if (params.size != null) {
-      msh3js._appContainer.style.width = params.size.width;
-      msh3js._appContainer.style.height = params.size.height;
+    if (options.cloth) {
+      if (options.cloth.enabled != null) msh3js.options.clothSim = options.cloth.enabled;
+      if (options.cloth.windSpeed != null) msh3js.options.clothWindSpeed = options.cloth.windSpeed;
+      if (options.cloth.windDirection != null) msh3js.options.clothWindDirection = options.cloth.windDirection;
+    }
+    if (options.controlDamping != null) msh3js.options.controlDamping = options.controlDamping;
+    if (options.dirLight1) {
+      if (options.dirLight1.color != null) msh3js.options.dirLightColor = options.dirLight1.color;
+      if (options.dirLight1.intensity != null) msh3js.options.dirLightIntensity = options.dirLight1.intensity;
+      if (options.dirLight1.azimuth != null) msh3js.options.dirLightAzimuth = options.dirLight1.azimuth;
+      if (options.dirLight1.elevation != null) msh3js.options.dirLightElevation = options.dirLight1.elevation;
+    }
+    if (options.dirLight2) {
+      if (options.dirLight2.color != null) msh3js.options.dirLight2Color = options.dirLight2.color;
+      if (options.dirLight2.intensity != null) msh3js.options.dirLight2Intensity = options.dirLight2.intensity;
+      if (options.dirLight2.azimuth != null) msh3js.options.dirLight2Azimuth = options.dirLight2.azimuth;
+      if (options.dirLight2.elevation != null) msh3js.options.dirLight2Elevation = options.dirLight2.elevation;
+    }
+    if (options.displayHelpers != null) {
+      msh3js.options.enableDirLightHelper = options.displayHelpers;
+      msh3js.options.enableDirLightHelper2 = options.displayHelpers;
+      msh3js.options.enableViewHelper = options.displayHelpers;
+      msh3js.options.enableGrid = options.displayHelpers;
+      msh3js.options.showSkeleton = options.displayHelpers;
+    }
+    if (options.displayShadows != null) msh3js.options.enableShadows = options.displayShadows;
+    if (options.displayStats != null) msh3js.options.showStats = options.displayStats;
+    if (options.displayTweakpane != null) msh3js.options.displayTweakpane = options.displayTweakpane;
+    if (options.GPU != null) msh3js.options.preferredGPU = options.GPU;
+    if (options.pixelRatio != null) msh3js.options.pixelRatio = options.pixelRatio;
+    if (options.renderingAPI != null) msh3js.options.renderingAPI = options.renderingAPI;
+    if (options.tweakpaneFont != null) msh3js.options.tweakpaneFont = options.tweakpaneFont;
+    if (options.viewHelperColors) {
+      if (options.viewHelperColors.x != null) msh3js.options.viewHelperColors.x = options.viewHelperColors.x;
+      if (options.viewHelperColors.y != null) msh3js.options.viewHelperColors.y = options.viewHelperColors.y;
+      if (options.viewHelperColors.z != null) msh3js.options.viewHelperColors.z = options.viewHelperColors.z;
+    }
+    if (options.xr) {
+      if (options.xr.AR != null) msh3js.options.AR = options.xr.AR;
+      if (options.xr.VR != null) msh3js.options.VR = options.xr.VR;
+    }
+    if (options.size != null) {
+      msh3js._appContainer.style.width = options.size.width;
+      msh3js._appContainer.style.height = options.size.height;
     }
 
     // Set canvas size to fill _appContainer
-    msh3js.canvas.style.width = '100%';
-    msh3js.canvas.style.height = '100%';
+    if (msh3js.canvas) {
+      msh3js.canvas.style.width = '100%';
+      msh3js.canvas.style.height = '100%';
+    }
 
     // Get canvas size and record
     msh3js.size = {
@@ -261,36 +314,72 @@ const msh3js = {
         msh3js._serviceWorker = registration.active ?? registration.waiting ?? registration.installing;
         // Set supportedFeatures value if service worker is enabled
         msh3js._supportedFeatures.serviceWorker = !!msh3js._serviceWorker;
-        if (msh3js.debug) console.log("initApp::Service Worker enabled with scope:", registration.scope);
+        msh3js.manageListeners("add", "serviceWorker");
       } catch (e) { console.error("initApp::Service Worker registration failed:", e); }
-      // Listen for messages from the service worker
-      navigator.serviceWorker.addEventListener('message', event => {
-        if (event.data && event.data.action === 'reload') {
-          console.log('Service Worker requested page reload.');
-          window.location.reload();
-        }
-      });
     }
 
     // Get supported graphics features
     await msh3js.getSupportedGraphicsFeatures();
 
-    // Have webGL2 as default, webGL as fallback, webGPU as final option
-    if (msh3js._supportedFeatures.webGL2.supported === true) {
-      if (msh3js._supportedFeatures.webGL2.aa === true) {
-        msh3js.options.aa = true; // Enable AA if supported by default
-        msh3js.options.sampleCount = 2; // Set sample count to 2x by default
+    // Validate selected renderingAPI
+    const preferredApi = msh3js.options.renderingAPI;
+    const isPreferredApiSupported = msh3js._supportedFeatures[preferredApi]?.supported;
+
+    if (!isPreferredApiSupported) {
+      if (msh3js.debug) console.warn(`initApp::Preferred API "${preferredApi}" is not supported. Attempting to find a fallback.`);
+      // Define a fallback order
+      const fallbackOrder = ['webgl2', 'webgl', 'webgpu'];
+      let foundFallback = false;
+      for (const api of fallbackOrder) {
+        if (msh3js._supportedFeatures[api]?.supported) {
+          msh3js.options.renderingAPI = api;
+          if (msh3js.debug) console.log(`initApp::Falling back to supported API: "${api}"`);
+          foundFallback = true;
+          break;
+        }
       }
-    } else if (msh3js._supportedFeatures.webGL.supported === true) {
-      if (msh3js._supportedFeatures.webGL.aa === true) {
-        msh3js.options.aa = true;
-        msh3js.options.sampleCount = 2;
+      if (!foundFallback) {
+        console.error("initApp::No supported graphics API found!");
+        return null;
       }
+    } else if (msh3js.debug) {
+      console.log(`initApp::Using preferred graphics API: "${preferredApi}"`);
     }
-    else {
-      // No supported graphics API found
-      console.error("initApp::No supported graphics API found.");
-      return null;
+
+    // Set a default AA sample count if it wasn't specified
+    const userSetSampleCount = (msh3jsOptions != null) || (options.AAsampleCount != null);
+    if (!userSetSampleCount) {
+      const apiFeatures = msh3js._supportedFeatures[msh3js.options.renderingAPI];
+      if (apiFeatures.aa) {
+        // Find the first available sample count greater than 0.
+        const defaultSampleOption = apiFeatures.sampleCountOptions.find(opt => opt.value > 0);
+        if (defaultSampleOption) {
+          msh3js.options.sampleCount = defaultSampleOption.value;
+          msh3js.options.aa = true;
+          if (msh3js.debug) {
+            console.log(`initApp::AA not specified by user. Defaulting to ${msh3js.options.sampleCount}x for ${msh3js.options.renderingAPI}.`);
+          }
+        }
+      }
+    } else {
+      // Validate the user-set AA value
+      const apiFeatures = msh3js._supportedFeatures[msh3js.options.renderingAPI];
+      const supportedSampleCounts = apiFeatures.sampleCountOptions.map(opt => opt.value);
+      const userSampleCount = msh3js.options.sampleCount;
+
+      if (!supportedSampleCounts.includes(userSampleCount)) {
+        if (msh3js.debug) {
+          console.warn(`initApp::User-defined sample count of ${userSampleCount}x is not supported by ${msh3js.options.renderingAPI}.`);
+        }
+        // Find the highest supported value that is less than the user's requested value.
+        const lowerSupportedValues = supportedSampleCounts.filter(v => v < userSampleCount);
+        const fallbackSampleCount = lowerSupportedValues.length > 0 ? Math.max(...lowerSupportedValues) : 0;
+
+        msh3js.options.sampleCount = fallbackSampleCount;
+        if (msh3js.debug) {
+          console.warn(`initApp::Falling back to a supported sample count of ${fallbackSampleCount}x.`);
+        }
+      }
     }
 
     // Check for persistent storage
@@ -311,10 +400,6 @@ const msh3js = {
       });
     }
 
-    //if (await msh3js.getLaunchFiles() === true) {
-    //  await msh3js.processFiles(msh3js._files);
-    //}
-
     // Create file input and add listeners
     msh3js.createFileInput();
     msh3js.manageListeners("add", "fileDropCanvas");
@@ -326,24 +411,31 @@ const msh3js = {
 
   // Main entrypoint that calls initApp with passed params and sets render method
   async startApp(canvas = null,
-    // TODO: finish to allow override of saved options
     options = {
       AA: null,
       AAsampleCount: null,
-      ambientLighting: null,
+      ambLightColor: null,
+      ambLightIntensity: null,
       autoRotate: null,
       autoRotateSpeed: null,
       backgroundColor: null,
       backgroundImage: null,
+      bloom: null, // { enabled, threshold, strength, radius } - Note: Not fully implemented yet
+      cloth: null, // { enabled, windSpeed, windDirection }
       controlDamping: null,
-      dirLight: null,
-      dirLight2: null,
+      dirLight1: null, // { color, intensity, azimuth, elevation }
+      dirLight2: null, // { color, intensity, azimuth, elevation }
       displayHelpers: null,
       displayShadows: null,
       displayStats: null,
       displayTweakpane: null,
       GPU: null,
       pixelRatio: null,
+      renderingAPI: null,
+      tweakpaneFont: null,
+      viewHelperColors: null, // { x, y, z }
+      xr: null, // { AR, VR }
+      urls: null, // Array of URLs to load, e.g., ['model.msh', 'texture1.tga']
     }
   ) {
     if (msh3js.debug) {
@@ -359,7 +451,8 @@ const msh3js = {
     let appContainer = document.getElementById("app") ?? document.getElementById("msh3js") ?? document.body;
 
     // Either get canvas from param or from HTML or create a new one inside appContainer
-    let appCanvas = canvas ?? document.getElementById("msh3jsCanvas") ?? appContainer.querySelector("canvas") ??
+    // Assign directly to msh3js.canvas
+    msh3js.canvas = canvas ?? document.getElementById("msh3jsCanvas") ?? appContainer.querySelector("canvas") ??
       msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height }, true);
 
     // Get/create tweakpane panel container (div)
@@ -372,9 +465,6 @@ const msh3js = {
         tweakpaneContainer.id = "tweakpaneContainer";
         appContainer.appendChild(tweakpaneContainer);
       }
-      // Make tweakpane container draggable and resizable from right edge
-      msh3js.makeDraggable(tweakpaneContainer);
-      msh3js.makeResizable(tweakpaneContainer);
     }
 
     // Get/create loading bar container and elements
@@ -395,31 +485,15 @@ const msh3js = {
     }
 
     // Assign params from HTML element references and passed app options
-    const params = { appCanvas, appContainer, tweakpaneContainer, loadingContainer };
-    if (options.AA !== null) params.aa = options.AA;
-    if (options.AAsampleCount !== null) params.sampleCount = options.AAsampleCount;
-    if (options.ambientLighting !== null) params.ambientLighting = options.ambientLighting;
-    if (options.autoRotate !== null) params.autoRotate = options.autoRotate;
-    if (options.autoRotateSpeed !== null) params.autoRotateSpeed = options.autoRotateSpeed;
-    if (options.backgroundColor !== null) params.backgroundColor = options.backgroundColor;
-    if (options.backgroundImage !== null) params.backgroundImage = options.backgroundImage;
-    if (options.controlDamping !== null) params.controlDamping = options.controlDamping;
-    if (options.dirLight !== null) params.dirLight = options.dirLight;
-    if (options.dirLight2 !== null) params.dirLight2 = options.dirLight2;
-    if (options.displayHelpers !== null) params.displayHelpers = options.displayHelpers;
-    if (options.displayShadows !== null) params.displayShadows = options.displayShadows;
-    if (options.displayStats !== null) params.displayStats = options.displayStats;
-    if (options.displayTweakpane !== null) params.displayTweakpane = options.displayTweakpane;
-    if (options.GPU !== null) params.preferredGPU = options.GPU;
-    if (options.pixelRatio !== null) params.pixelRatio = options.pixelRatio;
-    msh3js.params = params;
+    const params = { appCanvas: msh3js.canvas, appContainer, tweakpaneContainer, loadingContainer };
+
     // Import webgl-lint if in debug
     if (msh3js.debug)
       if (!msh3js._modules.webglLint)
         msh3js._modules.webglLint = await import("webgl-lint");
 
     // Initialize the app object
-    const initialized = await msh3js.initApp(params);
+    const initialized = await msh3js.initApp(params, options);
     if (!initialized) {
       console.error("startApp::Failed to initialize app:", msh3js);
       // Alert the user about the requirement
@@ -430,6 +504,11 @@ const msh3js = {
       return msh3js;
     }
     if (msh3js.debug) console.log("startApp::App started.");
+
+    // If URLs are provided in the options, load them.
+    if (options.urls && Array.isArray(options.urls) && options.urls.length > 0) {
+      await msh3js.loadFromUrls(options.urls);
+    }
     await msh3js.startThree(params);
   },
 
@@ -443,8 +522,8 @@ const msh3js = {
     if (!msh3js.three.orbitControls) msh3js.createOrbitControls();
 
     if (!msh3js.three.renderer || !msh3js.context) {
-      const { renderer, context } = await msh3js.createRenderer({
-        renderingAPI: msh3js._supportedFeatures.webGL2.supported ? "webGL2" : "webGL",
+      const { renderer, context } = await msh3js.createRenderer({ // Use the user-selected API
+        renderingAPI: msh3js.options.renderingAPI,
         size: msh3js.size,
         pixelRatio: msh3js.options.pixelRatio,
         GPU: msh3js.options.preferredGPU,
@@ -469,37 +548,20 @@ const msh3js = {
     THREE.ColorManagement.enabled = true;
     await msh3js.initThree();
 
-    // Adjust three to passed param options
-    if (params.ambientLighting != null) {
-      // Set ambient light color and intensity THREE MUST EXIST
-      msh3js.three.ambLight.color.set(params.ambientLighting.color);
-      msh3js.three.ambLight.intensity = params.ambientLighting.intensity;
-    } else {
-      msh3js.three.ambLight.color.set(msh3js.options.ambLightColor);
-      msh3js.three.ambLight.intensity = msh3js.options.ambLightIntensity;
-    }
-    if (params.dirLight != null) {
-      // Set directional light color and intensity THREE MUST EXIST
-      msh3js.three.dirLight.color.set(params.dirLight.color);
-      msh3js.three.dirLight.intensity = params.dirLight.intensity;
-    } else {
-      msh3js.three.dirLight.color.set(msh3js.options.dirLightColor);
-      msh3js.three.dirLight.intensity = msh3js.options.dirLightIntensity;
-    }
-    if (params.dirLight2 != null) {
-      // Set directional light color and intensity THREE MUST EXIST
-      msh3js.three.dirLight2.color.set(params.dirLight2.color);
-      msh3js.three.dirLight2.intensity = params.dirLight2.intensity;
-    } else {
-      msh3js.three.dirLight2.color.set(msh3js.options.dirLight2Color);
-      msh3js.three.dirLight2.intensity = msh3js.options.dirLight2Intensity;
-    }
+    // Apply final options to the created Three.js objects
+    msh3js.three.ambLight.color.set(msh3js.options.ambLightColor);
+    msh3js.three.ambLight.intensity = msh3js.options.ambLightIntensity;
+    msh3js.three.dirLight.color.set(msh3js.options.dirLightColor);
+    msh3js.three.dirLight.intensity = msh3js.options.dirLightIntensity;
+    msh3js.three.dirLight2.color.set(msh3js.options.dirLight2Color);
+    msh3js.three.dirLight2.intensity = msh3js.options.dirLight2Intensity;
+
     // Optionally set up stats and tweakpane if needed
     if (msh3js.debug === true) msh3js.options.showStats = true;
-    if (params.showStats !== false) {
+    if (msh3js.options.showStats !== false) {
       await msh3js.initStats(msh3js.options.showStats);
     }
-    if (params.displayTweakpane !== false) {
+    if (msh3js.options.displayTweakpane !== false) {
       await msh3js.initTweakpane(params.displayTweakpane);
     }
     // Set animation loop
@@ -521,6 +583,14 @@ const msh3js = {
           const statsModule = await import("stats-gl");
           Stats = statsModule.default;
           msh3js._modules.Stats = Stats;
+        }
+
+        // For WebGPURenderer, we need to wait a frame to ensure all internal
+        // components, especially those for GPU queries, are fully initialized
+        // before stats-gl tries to access them.
+        if (msh3js.options.renderingAPI === 'webgpu') {
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          if (msh3js.debug) console.log("initStats::Waited one frame for WebGPURenderer initialization.");
         }
 
         if (msh3js.three.renderer) {
@@ -558,8 +628,17 @@ const msh3js = {
 
   // Remove or add and return tweakpane pane
   async initTweakpane(enabled = true) {
+    // If disposing, remove listeners from the old pane elements.
+    if (msh3js._tweakpaneContainer) {
+      msh3js.manageListeners("remove", "draggable", msh3js._tweakpaneContainer);
+      msh3js.manageListeners("remove", "resizable", msh3js._tweakpaneContainer);
+    }
+
     // Dispose of any existing pane to prevent duplicates
-    if (msh3js.pane) msh3js.pane.dispose();
+    if (msh3js.pane) {
+      msh3js.pane.dispose();
+      msh3js.pane = null;
+    }
     if (enabled === false) return null;
 
     // Dynamically import Tweakpane and its plugins if they haven't been loaded yet.
@@ -597,225 +676,131 @@ const msh3js = {
     const threeTab = tab.pages[3];
     const appSettingsTab = tab.pages[4];
 
-    // MSH Info Folder: Display read-only information about the loaded MSH file.
-    const mshFileNameBinding = mshTab.addBinding(
-      msh3js.ui,
-      "mshName",
-      { label: "Filename:", readonly: true }
-    );
-    mshFileNameBinding.element.style.cursor = "pointer";
-    mshFileNameBinding.element.addEventListener("click", msh3js.clickFileInput);
+    // --- MSH Tab ---
+    const filesFolder = mshTab.addFolder({ title: "Files", expanded: false });
 
-    const mshFileSizeBinding = mshTab.addBinding(
-      msh3js.ui,
-      "mshSize",
-      { label: "Filesize:", readonly: true, format: (v) => `${Math.round(v)} bytes` }
-    );
-    const mshFileLastModBinding = mshTab.addBinding(
-      msh3js.ui,
-      "mshLastModified",
-      { label: "Last Modified:", readonly: true }
-    );
-    const mshFileSceneNameBinding = mshTab.addBinding(
-      msh3js.ui,
-      "sceneName",
-      { label: "Scene Name:", readonly: true }
-    );
-    mshTab.addBlade({ view: "separator" });
+    // Loop through each loaded MSH file and create a folder for it
+    if (msh3js.three.msh.length > 0) filesFolder.expanded = true;
+    for (const mshData of msh3js.three.msh) {
+      const mshFolder = filesFolder.addFolder({ title: mshData.fileName, expanded: true });
+      if (msh3js.three.msh.length > 1) mshFolder.expanded = false;
 
-    // Models Folder: Create a folder for each model within the MSH file.
-    const mshModelsFolder = mshTab.addFolder({ title: "Models", expanded: true });
-    for (let i = 0; i < msh3js.ui.models.length; i++) {
-      const model = msh3js.ui.models[i];
-      if (msh3js.debug) console.log("initTweakpane::Model: ", model, "added to pane.");
-      const modelFolder = mshModelsFolder.addFolder({ title: model.name, expanded: false });
-      // Store original transforms if they don't exist
-      if (!model.userData.originalPosition) {
-        model.userData.originalPosition = model.position.clone();
-      }
-      if (!model.userData.originalRotation) {
-        model.userData.originalRotation = model.rotation.clone();
-      }
-      modelFolder.addBinding(model, "visible", { label: "Visible" });
+      // MSH Info
+      mshFolder.addBinding(mshData, "fileName", { label: "Filename", readonly: true });
+      mshFolder.addBinding(mshData, "fileSize", { label: "Filesize", readonly: true, format: (v) => `${Math.round(v)} bytes` });
+      mshFolder.addBinding(mshData, "lastModified", { label: "Last Modified", readonly: true, format: (v) => new Date(v).toLocaleString() });
+      mshFolder.addBinding(mshData.sceneInfo, "name", { label: "Scene Name", readonly: true });
 
-      // Position and Rotation Folders (only for non-cloth meshes)
-      if (!model.userData.isCloth) {
-        const positionFolder = modelFolder.addFolder({ title: "Position", expanded: true });
-        positionFolder.addBinding(model.position, "x", { min: -100, max: 100, step: 0.1, label: "X" });
-        positionFolder.addBinding(model.position, "y", { min: -100, max: 100, step: 0.1, label: "Y" });
-        positionFolder.addBinding(model.position, "z", { min: -100, max: 100, step: 0.1, label: "Z" });
-        positionFolder.addButton({ title: "Reset" }).on("click", () => {
-          if (model.userData.originalPosition) {
-            model.position.copy(model.userData.originalPosition);
-            // Tweakpane doesn't automatically refresh bound values on external changes,
-            // so we need to tell it to refresh.
-            pane.refresh();
+      // Models Folder
+      const modelsInMsh = [];
+      mshData.group.traverse((child) => { if (child.isMesh) modelsInMsh.push(child); });
+
+      if (modelsInMsh.length > 0) {
+        const mshModelsFolder = mshFolder.addFolder({ title: "Models", expanded: false });
+        for (const model of modelsInMsh) {
+          const modelFolder = mshModelsFolder.addFolder({ title: model.name, expanded: false });
+          if (!model.userData.originalPosition) model.userData.originalPosition = model.position.clone();
+          if (!model.userData.originalRotation) model.userData.originalRotation = model.rotation.clone();
+
+          modelFolder.addBinding(model, "visible", { label: "Visible" });
+
+          if (!model.userData.isCloth) {
+            const positionFolder = modelFolder.addFolder({ title: "Position", expanded: false });
+            positionFolder.addBinding(model.position, "x", { min: -100, max: 100, step: 0.1, label: "X" });
+            positionFolder.addBinding(model.position, "y", { min: -100, max: 100, step: 0.1, label: "Y" });
+            positionFolder.addBinding(model.position, "z", { min: -100, max: 100, step: 0.1, label: "Z" });
+            positionFolder.addButton({ title: "Reset" }).on("click", () => {
+              if (model.userData.originalPosition) {
+                model.position.copy(model.userData.originalPosition);
+                pane.refresh();
+              }
+            });
+
+            const rotationFolder = modelFolder.addFolder({ title: "Rotation", expanded: false });
+            rotationFolder.addBinding(model.rotation, "x", { min: -Math.PI, max: Math.PI, step: 0.01, label: "X" });
+            rotationFolder.addBinding(model.rotation, "y", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Y" });
+            rotationFolder.addBinding(model.rotation, "z", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Z" });
+            rotationFolder.addButton({ title: "Reset" }).on("click", () => {
+              if (model.userData.originalRotation) {
+                model.rotation.copy(model.userData.originalRotation);
+                pane.refresh();
+              }
+            });
           }
-        });
 
-        const rotationFolder = modelFolder.addFolder({ title: "Rotation", expanded: true });
-        rotationFolder.addBinding(model.rotation, "x", { min: -Math.PI, max: Math.PI, step: 0.01, label: "X" })
-          .on('change', (ev) => {
-            model.rotation.x = ev.value;
-          });
-        rotationFolder.addBinding(model.rotation, "y", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Y" }).on(
-          "change",
-          (ev) => {
-            model.rotation.y = ev.value;
-          }
-        );
-        rotationFolder.addBinding(model.rotation, "z", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Z" })
-          .on('change', (ev) => {
-            model.rotation.z = ev.value;
-          });
-        rotationFolder.addButton({ title: "Reset" }).on("click", () => {
-          if (model.userData.originalRotation) {
-            model.rotation.copy(model.userData.originalRotation);
-            pane.refresh();
-          }
-        });
-      }
-
-      // Vertex Colors Toggle
-      if (model.geometry.attributes.color != null && model.geometry.attributes.color.count > 0) {
-        // If the model has vertex colors, add a toggle to enable/disable them.
-        model.userData.vertexColors = true;
-        modelFolder.addBinding(model.userData, "vertexColors", { label: "Vertex Colors" }).on("change", () => {
-          // When toggled, update the vertexColors property on all of the mesh's materials.
-          for (let mat of model.material)
-            mat.vertexColors = model.userData.vertexColors;
-        });
-      }
-    }
-    mshTab.addBlade({ view: "separator" });
-    // Materials in the msh
-    const mshMaterialsFolder = mshTab.addFolder({ title: "Materials", expanded: true }); // Main folder for all materials.
-    for (let i = 0; i < msh3js.ui.materials.length; i++) {
-      const material = msh3js.ui.materials[i];
-      if (msh3js.debug) console.log("initTweakpane::Material: ", material, "added to pane.");
-
-      // Define the four possible texture slots from the MSH material data.
-      const textureSlots = {
-        'TX0D': material.texture ?? material.matd.tx0d ?? 'Unassigned',
-        'TX1D': material.texture ? 'Unassigned' : material.matd.tx1d ?? 'Unassigned',
-        'TX2D': material.texture ? 'Unassigned' : material.matd.tx2d ?? 'Unassigned',
-        'TX3D': material.texture ? 'Unassigned' : material.matd.tx3d ?? 'Unassigned',
-      };
-
-      // Create a sub-folder for this specific material.
-      const materialFolder = mshMaterialsFolder.addFolder({ title: material.name, expanded: false });
-      materialFolder.addBinding(material.three, "wireframe", { label: "Wireframe" });
-
-      // Add a sub-folder for material attributes if they exist
-      if (material.matd && material.matd.atrb) {
-        const atrbFolder = materialFolder.addFolder({ title: "Attributes", expanded: true });
-        // Find the name of the active render type
-        const renderTypeName = Object.keys(material.matd.atrb.renderFlags).find(key => material.matd.atrb.renderFlags[key] === true) || 'unknown';
-        atrbFolder.addBinding(material.matd.atrb, 'renderType', {
-          readonly: true,
-          label: "Render Type",
-          format: (v) => `${v} (${renderTypeName})`,
-        });
-
-        // Conditionally show data0 and data1 for relevant render types
-        const renderType = material.matd.atrb.renderType;
-        if ([3, 7, 11, 25].includes(renderType)) { // scrolling, animated, detail, pulsate
-          atrbFolder.addBinding(material.matd.atrb, 'data0', { readonly: true, label: "Data 0" });
-          atrbFolder.addBinding(material.matd.atrb, 'data1', { readonly: true, label: "Data 1" });
-        }
-        // Add bitFlags directly to the attributes folder
-        for (const [flag, isEnabled] of Object.entries(material.matd.atrb.bitFlags)) {
-          if (isEnabled) {
-            atrbFolder.addBinding({ [flag]: isEnabled }, flag, { readonly: true });
-          }
-        }
-      }
-
-      if (textureSlots.TX0D !== 'Unassigned') {
-        const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: true });
-        // List all assigned textures, add missing textures to the array
-        for (const [label, textureName] of Object.entries(textureSlots)) {
-          if (textureName !== 'Unassigned') {
-            // Create a text input to display the filename.
-            const textureControl = texturesFolder.addBinding(textureSlots, label, {
-              label: label,
-              readonly: true,
+          if (model.geometry.attributes.color?.count > 0) {
+            model.userData.vertexColors = true;
+            modelFolder.addBinding(model.userData, "vertexColors", { label: "Vertex Colors" }).on("change", () => {
+              const materials = Array.isArray(model.material) ? model.material : [model.material];
+              for (let mat of materials) mat.vertexColors = model.userData.vertexColors;
             });
           }
         }
       }
+
+      // Materials Folder
+      if (mshData.materials.length > 0) {
+        const mshMaterialsFolder = mshFolder.addFolder({ title: "Materials", expanded: false });
+        for (const material of mshData.materials) {
+          const materialFolder = mshMaterialsFolder.addFolder({ title: material.name, expanded: false });
+          materialFolder.addBinding(material.three, "wireframe", { label: "Wireframe" });
+
+          if (material.matd?.atrb) {
+            const atrbFolder = materialFolder.addFolder({ title: "Attributes", expanded: false });
+            const renderTypeName = Object.keys(material.matd.atrb.renderFlags).find(key => material.matd.atrb.renderFlags[key]) || 'unknown';
+            atrbFolder.addBinding(material.matd.atrb, 'renderType', { readonly: true, label: "Render Type", format: (v) => `${v} (${renderTypeName})` });
+
+            const renderType = material.matd.atrb.renderType;
+            if ([3, 7, 11, 25].includes(renderType)) {
+              atrbFolder.addBinding(material.matd.atrb, 'data0', { readonly: true, label: "Data 0" });
+              atrbFolder.addBinding(material.matd.atrb, 'data1', { readonly: true, label: "Data 1" });
+            }
+            for (const [flag, isEnabled] of Object.entries(material.matd.atrb.bitFlags)) {
+              if (isEnabled) atrbFolder.addBinding({ [flag]: isEnabled }, flag, { readonly: true });
+            }
+          }
+
+          const textureSlots = {
+            'TX0D': material.texture ?? material.matd?.tx0d ?? 'Unassigned',
+            'TX1D': material.texture ? 'Unassigned' : material.matd?.tx1d ?? 'Unassigned',
+            'TX2D': material.texture ? 'Unassigned' : material.matd?.tx2d ?? 'Unassigned',
+            'TX3D': material.texture ? 'Unassigned' : material.matd?.tx3d ?? 'Unassigned',
+          };
+
+          if (Object.values(textureSlots).some(name => name !== 'Unassigned')) {
+            const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: false });
+            for (const [label, textureName] of Object.entries(textureSlots)) {
+              if (textureName !== 'Unassigned') {
+                texturesFolder.addBinding({ [label]: textureName }, label, { label, readonly: true });
+              }
+            }
+          }
+        }
+      }
+
+      // Missing Textures Folder
+      const missingTextureNames = new Set();
+      for (const requiredTexture of mshData.requiredTextures) {
+        if (!msh3js._files.hasOwnProperty(requiredTexture.toLowerCase())) {
+          missingTextureNames.add(requiredTexture);
+        }
+      }
+
+      if (missingTextureNames.size > 0) {
+        const missingTexturesFolder = mshFolder.addFolder({ title: "Missing Textures", expanded: true });
+        Array.from(missingTextureNames).forEach((textureName, index) => {
+          missingTexturesFolder.addBinding({ file: textureName }, 'file', { readonly: true, label: `File ${index + 1}` });
+        });
+      }
     }
 
-    // Missing Textures Folder: Display textures that are required but not yet loaded.
-    if (msh3js.ui.missingTextures.length > 0) {
-      mshTab.addBlade({ view: "separator" });
-      const missingTexturesFolder = mshTab.addFolder({ title: "Missing Textures", expanded: true });
-      missingTexturesFolder.addBlade({ view: 'separator' });
-      // Add a read-only text field for each missing texture.
-      msh3js.ui.missingTextures.forEach((textureName, index) => {
-        const dummy = { file: textureName };
-        missingTexturesFolder.addBinding(dummy, 'file', { readonly: true, label: `File ${index + 1}` });
-      });
-    }
+    // Add the upload button to the MSH tab itself, after the folder.
+    mshTab.addButton({ title: "Upload" }).on("click", () => {
+      msh3js.clickFileInput();
+      if (msh3js.debug) console.log("tweakpane::Upload button clicked.");
+    });
 
-    // Rendering options Folder on the "App" tab.
-    const renderingFolder = appSettingsTab.addFolder({ title: "Rendering" });
-
-    // Create AA control(s)
-    const aaControlWebgl = msh3js.generateAAControl(msh3js._supportedFeatures.webGL.sampleCountOptions, renderingFolder);
-    const aaControlWebgl2 = msh3js.generateAAControl(msh3js._supportedFeatures.webGL2.sampleCountOptions, renderingFolder);
-
-    // Switch visibility of AA controls
-    if (msh3js._supportedFeatures.webGL2.supported === true) {
-      aaControlWebgl.hidden = true;
-      aaControlWebgl2.hidden = false;
-    } else {
-      aaControlWebgl.hidden = false;
-      aaControlWebgl2.hidden = true;
-    }
-
-    // Pixel Ratio Slider for performance tuning.
-    const pixelRatioControl = renderingFolder
-      .addBinding(msh3js.options, "pixelRatio", {
-        label: "Pixel Ratio",
-        min: 0.25,
-        max: 3.0,
-        step: 0.25,
-      })
-      .on("change", async () => {
-        if (msh3js.debug)
-          console.log("Pixel ratio set to:", msh3js.options.pixelRatio);
-        msh3js.three.renderer.setPixelRatio(msh3js.options.pixelRatio);
-        msh3js.resize();
-      });
-
-    // GPU Preference Control (high-performance vs low-power).
-    const gpuControl = renderingFolder
-      .addBinding(msh3js.options, "preferredGPU", {
-        label: "GPU Preference",
-        options: {
-          default: "default",
-          low: "low-power",
-          high: "high-performance",
-        },
-      })
-      .on("change", async () => {
-        if (msh3js.debug)
-          console.log("GPU Preference set to:", msh3js.options.preferredGPU);
-        await msh3js.recreateRenderer();
-      });
-
-    // Stats toggle to show/hide the performance monitor.
-    const statsControl = renderingFolder
-      .addBinding(msh3js.options, "showStats", {
-        label: "Show Stats",
-      })
-      .on("change", async () => {
-        await msh3js.initStats(msh3js.options.showStats); // Toggle stats
-        if (msh3js.debug)
-          console.log("Stats set to:", msh3js.options.showStats);
-      });
-
+    // --- Scene Tab ---
     // Lights Folder on the "Scene" tab.
     const lightsFolder = controlsTab.addFolder({
       title: "Lights",
@@ -834,12 +819,15 @@ const msh3js = {
     }).on("change", () => {
       msh3js.three.dirLight.color.set(new THREE.Color(msh3js.options.dirLightColor));
       msh3js.three.dirLightHelper.update();
+      if (msh3js.debug) console.log("tweakpane::Directional light color set to:", msh3js.options.dirLightColor);
     });
     directionalLight1Folder.addBinding(msh3js.three.dirLight, "intensity", {
       label: "Intensity",
       min: 0,
       max: 10,
       step: 0.1,
+    }).on("change", () => {
+      if (msh3js.debug) console.log("tweakpane::Directional light intensity set to:", msh3js.three.dirLight.intensity);
     });
     directionalLight1Folder.addBinding(msh3js.options, "dirLightAzimuth", {
       label: "Azimuth",
@@ -848,6 +836,7 @@ const msh3js = {
       step: 1,
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
+      if (msh3js.debug) console.log("tweakpane::Directional light azimuth set to:", msh3js.options.dirLightAzimuth);
     });
     directionalLight1Folder.addBinding(msh3js.options, "dirLightElevation", {
       label: "Elevation",
@@ -856,6 +845,7 @@ const msh3js = {
       step: 1,
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
+      if (msh3js.debug) console.log("tweakpane::Directional light elevation set to:", msh3js.options.dirLightElevation);
     });
     directionalLight1Folder
       .addBinding(msh3js.options, "enableDirLightHelper", {
@@ -864,11 +854,7 @@ const msh3js = {
       .on("change", () => {
         msh3js.three.dirLightHelper.visible =
           msh3js.options.enableDirLightHelper;
-        if (msh3js.debug)
-          console.log(
-            "Directional light helper set to:",
-            msh3js.options.enableDirLightHelper ? "on" : "off"
-          );
+        if (msh3js.debug) console.log("tweakpane::Directional light helper set to:", msh3js.options.enableDirLightHelper ? "on" : "off");
       });
 
     const directionalLight2Folder = lightsFolder.addFolder({
@@ -883,12 +869,15 @@ const msh3js = {
     }).on("change", () => {
       msh3js.three.dirLight2.color.set(new THREE.Color(msh3js.options.dirLight2Color));
       msh3js.three.dirLightHelper2.update();
+      if (msh3js.debug) console.log("tweakpane::Directional light 2 color set to:", msh3js.options.dirLight2Color);
     });
     directionalLight2Folder.addBinding(msh3js.three.dirLight2, "intensity", {
       label: "Intensity",
       min: 0,
       max: 10,
       step: 0.1,
+    }).on("change", () => {
+      if (msh3js.debug) console.log("tweakpane::Directional light 2 intensity set to:", msh3js.three.dirLight2.intensity);
     });
     directionalLight2Folder.addBinding(msh3js.options, "dirLight2Azimuth", {
       label: "Azimuth",
@@ -897,6 +886,7 @@ const msh3js = {
       step: 1,
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight2, msh3js.options.dirLight2Azimuth, msh3js.options.dirLight2Elevation);
+      if (msh3js.debug) console.log("tweakpane::Directional light 2 azimuth set to:", msh3js.options.dirLight2Azimuth);
     });
     directionalLight2Folder.addBinding(msh3js.options, "dirLight2Elevation", {
       label: "Elevation",
@@ -905,6 +895,7 @@ const msh3js = {
       step: 1,
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight2, msh3js.options.dirLight2Azimuth, msh3js.options.dirLight2Elevation);
+      if (msh3js.debug) console.log("tweakpane::Directional light 2 elevation set to:", msh3js.options.dirLight2Elevation);
     });
     directionalLight2Folder
       .addBinding(msh3js.options, "enableDirLightHelper2", {
@@ -913,11 +904,7 @@ const msh3js = {
       .on("change", () => {
         msh3js.three.dirLightHelper2.visible =
           msh3js.options.enableDirLightHelper2;
-        if (msh3js.debug)
-          console.log(
-            "Directional light helper set to:",
-            msh3js.options.enableDirLightHelper2 ? "on" : "off"
-          );
+        if (msh3js.debug) console.log("tweakpane::Directional light helper set to:", msh3js.options.enableDirLightHelper2 ? "on" : "off");
       });
 
     // Ambient Light Folder for global, non-directional lighting.
@@ -930,12 +917,15 @@ const msh3js = {
       view: "html-color-picker",
     }).on("change", () => {
       msh3js.three.ambLight.color.set(new THREE.Color(msh3js.options.ambLightColor));
+      if (msh3js.debug) console.log("tweakpane::Ambient light color set to:", msh3js.options.ambLightColor);
     });
     ambientLightFolder.addBinding(msh3js.three.ambLight, "intensity", {
       label: "Intensity",
       min: 0,
       max: 10,
       step: 0.1,
+    }).on("change", () => {
+      if (msh3js.debug) console.log("tweakpane::Ambient light intensity set to:", msh3js.three.ambLight.intensity);
     });
 
     // Background Folder for scene background color and image settings.
@@ -954,19 +944,15 @@ const msh3js = {
         msh3js.three.scene.background = new THREE.Color(
           msh3js.options.backgroundColor
         );
-        if (msh3js.debug)
-          console.log(
-            "Background set to color:",
-            msh3js.options.backgroundColor,
-            "and image cleared."
-          );
+        if (msh3js.debug) console.log("tweakpane::Background set to color:", msh3js.options.backgroundColor, "and image cleared.");
       });
 
     // Button to upload a background image.
-    bgFolder.addButton({ title: "Upload Background Image" }).on("click", () => {
-      // Create and click a hidden file input.
-      msh3js.createBackgroundImageInput().click();
-    });
+    bgFolder.addButton({ title: "Upload Background Image" })
+      .on("click", () => {
+        msh3js.createBackgroundImageInput().click()
+        if (msh3js.debug) console.log("tweakpane::Background image upload button clicked.");
+      });
 
     // View Folder for camera and viewport helper controls.
     const viewFolder = controlsTab.addFolder({
@@ -975,18 +961,13 @@ const msh3js = {
     });
 
     // Auto-Rotate toggle for the camera.
-    const autoRotateControl = viewFolder // Controls for autorotate
+    viewFolder // Controls for autorotate
       .addBinding(msh3js.options, "autoRotate", { label: "Auto-Rotate" })
       .on("change", () => {
-        // Update autorotate directly on controls
         if (msh3js.three.orbitControls) {
           msh3js.three.orbitControls.autoRotate = msh3js.options.autoRotate;
         }
-        if (msh3js.debug)
-          console.log(
-            "AutoRotate set to:",
-            msh3js.options.autoRotate ? "on" : "off"
-          );
+        if (msh3js.debug) console.log("tweakpane::AutoRotate set to:", msh3js.options.autoRotate ? "on" : "off");
         // Show/hide speed control
         if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
       });
@@ -1003,16 +984,12 @@ const msh3js = {
         if (msh3js.three.orbitControls) {
           msh3js.three.orbitControls.autoRotateSpeed = msh3js.options.autoRotateSpeed;
         }
-        if (msh3js.debug)
-          console.log(
-            "AutoRotateSpeed set to:",
-            msh3js.options.autoRotateSpeed
-          );
+        if (msh3js.debug) console.log("tweakpane::AutoRotateSpeed set to:", msh3js.options.autoRotateSpeed);
       });
     // Hide initially if autoRotate is off
     if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
 
-    const dampingControl = viewFolder // Camera controls damping (inertia) toggle.
+    viewFolder // Camera controls damping (inertia) toggle.
       .addBinding(msh3js.options, "controlDamping", {
         label: "Controls Damping",
       })
@@ -1022,27 +999,19 @@ const msh3js = {
           msh3js.three.orbitControls.enableDamping = msh3js.options.controlDamping;
           msh3js.three.orbitControls.update(); // Apply change immediately if needed
         }
-        if (msh3js.debug)
-          console.log(
-            "Damping set to:",
-            msh3js.options.controlDamping ? "on" : "off"
-          );
+        if (msh3js.debug) console.log("tweakpane::Constrols damping set to:", msh3js.options.controlDamping ? "on" : "off");
       });
 
     // Grid plane visibility toggle.
-    const gridHelperControl = viewFolder
+    viewFolder
       .addBinding(msh3js.options, "enableGrid", { label: "Show Grid" })
       .on("change", () => {
         msh3js.three.gridHelper.visible = msh3js.options.enableGrid;
-        if (msh3js.debug)
-          console.log(
-            "Grid helper set to:",
-            msh3js.three.gridHelper.visible ? "on" : "off"
-          );
+        if (msh3js.debug) console.log("tweakpane::Grid helper set to:", msh3js.three.gridHelper.visible ? "on" : "off");
       });
 
     // View Helper (axis gizmo) visibility toggle.
-    const viewHelperControl = viewFolder
+    viewFolder
       .addBinding(msh3js.options, "enableViewHelper", {
         label: "Show Axis Helper",
       })
@@ -1059,72 +1028,95 @@ const msh3js = {
             msh3js.three.viewHelper.setEnabled(false);
           }
         }
-        if (msh3js.debug)
-          console.log(
-            "View helper set to:",
-            msh3js.options.enableViewHelper ? "on" : "off"
-          );
+        if (msh3js.debug) console.log("tweakpane::View helper set to:", msh3js.options.enableViewHelper ? "on" : "off");
       });
 
+    // --- Three Tab ---
+    // Three.js parameters
     const graphicsApiFolder = threeTab.addFolder({
       title: "Renderer",
       expanded: false,
     });
 
-    graphicsApiFolder.addBinding(msh3js.options, 'renderingAPI', {
+    // Build the list of available rendering APIs based on feature detection.
+    const apiOptions = {};
+    if (msh3js._supportedFeatures.webgl.supported) apiOptions['WebGL'] = 'webgl';
+    if (msh3js._supportedFeatures.webgl2.supported) apiOptions['WebGL2'] = 'webgl2';
+    if (msh3js._supportedFeatures.webgpu.supported) apiOptions['WebGPU'] = 'webgpu';
+
+    const apiControl = graphicsApiFolder.addBinding(msh3js.options, 'renderingAPI', {
       label: 'Graphics API',
-      options: {
-        'WebGL': 'webgl',
-        'WebGL2': 'webgl2',
-        'WebGPU': 'webgpu',
-      },
-    }).on('change', (ev) => {
-      if (msh3js.debug) console.log("Graphics API selection changed to:", ev.value);
-      // TODO: Implement renderer recreation logic here.
-      // For now, we can just log the change.
-      // msh3js.recreateRenderer();
+      options: apiOptions,
+    }).on('change', async (ev) => {
+      if (msh3js.debug) console.log("tweakpane::Graphics API selection changed to:", ev.value);
+      // When the user manually changes the API, find the closest supported sample count.
+      const currentSampleCount = msh3js.options.sampleCount;
+      const newApiFeatures = msh3js._supportedFeatures[ev.value];
+      const newSupportedSampleCounts = newApiFeatures.sampleCountOptions.map(opt => opt.value);
+      // Find the closest value in the new list of supported counts.
+      const closestSampleCount = newSupportedSampleCounts.reduce((prev, curr) => {
+        return (Math.abs(curr - currentSampleCount) < Math.abs(prev - currentSampleCount) ? curr : prev);
+      });
+      msh3js.options.sampleCount = closestSampleCount;
+      // Update the options of the single AA control.
+      aaControl.options = newApiFeatures.sampleCountOptions;
+      if (msh3js.debug) console.log(`tweakpane::Sample count changed from ${currentSampleCount} to closest supported value: ${closestSampleCount}`);
+      msh3js.pane.refresh(); // Refresh to show the new default
+      await msh3js.recreateRenderer();
     });
+    apiControl.disabled = true; // While testing, disable
 
     const bloomFolder = threeTab.addFolder({
       title: "Bloom",
       expanded: false,
     });
 
-    bloomFolder.addBinding(msh3js.options, "bloomEnabled", { label: "Enable Bloom" }).on("change", (ev) => {
-      if (msh3js.debug) console.log("Bloom set to:", ev.value);
+    const bloomEnableControl = bloomFolder.addBinding(msh3js.options, "bloomEnabled", {
+      label: "Enable Bloom"
+    }).on("change", (ev) => {
+      if (msh3js.debug) console.log("tweakpane::Bloom set to:", ev.value);
     });
+    // While testing, disable
+    bloomEnableControl.disabled = true;
 
-    bloomFolder.addBinding(msh3js.options, "bloomThreshold", {
+    const bloomThresholdControl = bloomFolder.addBinding(msh3js.options, "bloomThreshold", {
       label: "Threshold",
       min: 0, max: 1, step: 0.01
     }).on("change", (ev) => {
-      if (msh3js.debug) console.log("Bloom threshold set to:", ev.value);
+      if (msh3js.debug) console.log("tweakpane::Bloom threshold set to:", ev.value);
     });
+    // While testing, disable
+    bloomThresholdControl.disabled = true;
 
-    bloomFolder.addBinding(msh3js.options, "bloomStrength", {
+    const bloomStrengthControl = bloomFolder.addBinding(msh3js.options, "bloomStrength", {
       label: "Strength",
       min: 0, max: 3, step: 0.01
     }).on("change", (ev) => {
-      if (msh3js.debug) console.log("Bloom strength set to:", ev.value);
+      if (msh3js.debug) console.log("tweakpane::Bloom strength set to:", ev.value);
     });
+    // While testing, disable
+    bloomStrengthControl.disabled = true;
 
-    bloomFolder.addBinding(msh3js.options, "bloomRadius", {
+    const bloomRadiusControl = bloomFolder.addBinding(msh3js.options, "bloomRadius", {
       label: "Radius",
       min: 0, max: 1, step: 0.01
     }).on("change", (ev) => {
-      if (msh3js.debug) console.log("Bloom radius set to:", ev.value);
+      if (msh3js.debug) console.log("tweakpane::Bloom radius set to:", ev.value);
     });
+    // While testing, disable
+    bloomRadiusControl.disabled = true;
 
     const clothFolder = threeTab.addFolder({
       title: "Cloth Simulation",
       expanded: true,
     });
 
-    clothFolder.addBinding(msh3js.options, "clothSim", { label: "Enable Cloth Sim" }).on("change", () => {
+    clothFolder.addBinding(msh3js.options, "clothSim", {
+      label: "Enable Cloth Sim"
+    }).on("change", () => {
       if (msh3js.options.clothSim) msh3js.initClothSimulations();
       else msh3js.resetClothSimulations();
-      if (msh3js.debug)
-        console.log("Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
+      if (msh3js.debug) console.log("tweakpane::Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
     });
 
     clothFolder.addBinding(msh3js.options, "clothWindSpeed", {
@@ -1132,12 +1124,17 @@ const msh3js = {
       min: 0,
       max: 10,
       step: 0.1
+    }).on("change", () => {
+      if (msh3js.debug) console.log("tweakpane::Cloth wind speed set to:", msh3js.options.clothWindSpeed);
     });
+
     clothFolder.addBinding(msh3js.options, "clothWindDirection", {
       label: "Wind Direction",
       min: 0,
       max: 360,
       step: 1
+    }).on("change", () => {
+      if (msh3js.debug) console.log("tweakpane::Cloth wind direction set to:", msh3js.options.clothWindDirection);
     });
 
     const xrFolder = threeTab.addFolder({
@@ -1145,74 +1142,28 @@ const msh3js = {
       expanded: false,
     });
 
-    xrFolder.addBinding(msh3js.options, "AR", {
+    const arControl = xrFolder.addBinding(msh3js.options, "AR", {
       label: "AR",
     }).on("change", () => {
       //if (msh3js.options.AR) msh3js.initAR();
       //else msh3js.resetAR();
-      if (msh3js.debug)
-        console.log("AR set to:", msh3js.options.AR ? "on" : "off");
+      if (msh3js.debug) console.log("tweakpane::AR set to:", msh3js.options.AR ? "on" : "off");
     });
+    // While testing, disable
+    arControl.disabled = true;
 
-    xrFolder.addBinding(msh3js.options, "VR", {
+    const vrControl = xrFolder.addBinding(msh3js.options, "VR", {
       label: "VR",
     }).on("change", () => {
       //if (msh3js.options.VR) msh3js.initVR();
       //else msh3js.resetVR();
       if (msh3js.debug)
-        console.log("VR set to:", msh3js.options.VR ? "on" : "off");
+        console.log("tweakpane::VR set to:", msh3js.options.VR ? "on" : "off");
     });
+    // While testing, disable
+    vrControl.disabled = true;
 
-    // Preferences Folder for saving and clearing settings.
-    const preferencesFolder = appSettingsTab.addFolder({
-      title: "Preferences",
-      expanded: true,
-    });
-
-    // Dropdown to select the UI font.
-    preferencesFolder.addBinding(msh3js.options, 'tweakpaneFont', {
-      label: 'UI Font',
-      options: {
-        Orbitron: 'Orbitron',
-        Aurebesh: 'Aurebesh',
-        System: 'sans-serif',
-      },
-    }).on('change', (ev) => {
-      // Update the CSS variable on the container to change the font.
-      if (msh3js._tweakpaneContainer) {
-        msh3js._tweakpaneContainer.style.setProperty('--tweakpane-font', ev.value);
-      }
-    });
-
-    // Button to save current app options to localStorage.
-    const saveBtn = preferencesFolder.addButton({
-      title: "Save",
-      label: "Options",
-    });
-    saveBtn.on("click", () => {
-      if (msh3js._supportedFeatures.localStorage === true) {
-        window.localStorage.setItem(
-          "msh3js_options",
-          JSON.stringify(msh3js.options)
-        );
-        if (msh3js.debug) console.log("User preferences saved.");
-      }
-    });
-
-    // Button to clear saved preferences from localStorage.
-    const cacheBtn = preferencesFolder.addButton({
-      title: "Clear",
-      label: "",
-    });
-    cacheBtn.on("click", () => {
-      if (msh3js._serviceWorker) {
-        msh3js._serviceWorker.postMessage({ action: "clearCache" });
-      }
-      if (msh3js._supportedFeatures.localStorage) {
-        window.localStorage.removeItem("msh3js_options");
-      }
-    });
-
+    // --- Anim Tab ---
     // Animation list
     const animationsFolder = animationsTab.addFolder({
       title: "Animation Selection",
@@ -1242,9 +1193,11 @@ const msh3js = {
     }
 
     // Button to import additional animations
-    animationsTab.addButton({ title: "Import Animations..." }).on("click", () => {
-      msh3js.createAnimationFileInput().click();
-    });
+    animationsTab.addButton({ title: "Import Animations..." })
+      .on("click", () => {
+        msh3js.createAnimationFileInput().click()
+        if (msh3js.debug) console.log("tweakpane::Animation import button clicked.");
+      });
 
     // Add dropdown to select animation, which will be present even if no model is loaded
     const animationDropdown = animationsFolder.addBinding(msh3js.ui, 'currentAnimation', {
@@ -1253,37 +1206,36 @@ const msh3js = {
     }).on('change', (ev) => {
       // When an animation is selected, just stop any currently playing one. Don't auto-play.
       msh3js.stopAllAnimations(false);
+      if (msh3js.debug) console.log("tweakpane::Animation selected:", ev.value);
     });
     msh3js.ui.animationDropdown = animationDropdown; // Store the reference
 
     // Add toggle for showing the skeleton
-    // Doesn't work correctly
-
     animationsFolder.addBinding(msh3js.options, 'showSkeleton', {
       label: 'Show Skeleton'
     }).on('change', (ev) => {
-      if (msh3js.debug) console.log("Skeleton visibility set to:", ev.value);
       if (msh3js.three.skeletonHelper)
         msh3js.three.skeletonHelper.visible = ev.value;
+      if (msh3js.debug) console.log("tweakpane::Skeleton visibility set to:", ev.value);
     });
 
-
-    // Add slider to adjust playback speed
+    // Show animation playback status
     animationsPlaybackFolder.addBinding(msh3js.ui, "animationPlaying", {
       label: "Status",
       readonly: true,
-      format: (v) => v ? 'Playing' : 'Stopped',
     });
 
     // Add buttons for starting/stopping
     animationsPlaybackFolder.addButton({ title: "Play" }).on("click", () => {
       if (msh3js.ui.currentAnimation !== 'None') {
         msh3js.playAnimation(msh3js.ui.currentAnimation);
+        if (msh3js.debug) console.log("tweakpane::Animation playback started for:", msh3js.ui.currentAnimation);
       }
     });
 
     animationsPlaybackFolder.addButton({ title: "Stop" }).on("click", () => {
       msh3js.stopAllAnimations(false);
+      if (msh3js.debug) console.log("tweakpane::Animation playback stopped.");
     });
 
     // Add slider to adjust playback speed
@@ -1293,9 +1245,9 @@ const msh3js = {
       max: 4.0,
       step: 0.1,
     }).on("change", (ev) => {
-      if (msh3js.debug) console.log(`Animation speed set to: ${ev.value}`);
       // Update animation mixer speed for all loaded MSH models
       if (msh3js.three.mixer) msh3js.three.mixer.timeScale = ev.value;
+      if (msh3js.debug) console.log(`tweakpane::Animation speed set to: ${ev.value}`);
     });
 
     // Add checkbox to toggle looping
@@ -1308,10 +1260,128 @@ const msh3js = {
           action.setLoop(ev.value ? THREE.LoopRepeat : THREE.LoopOnce);
           // If we are turning looping off, we need to reset and play to apply the change
           // if the animation was already past its natural end.
-          if (!ev.value) {
-            action.reset().play();
-          }
+          if (!ev.value) action.reset().play();
         });
+        if (msh3js.debug) console.log("tweakpane::Animation looping set to:", ev.value);
+      }
+    });
+
+    // --- App Tab ---
+    // Rendering options
+    const renderingFolder = appSettingsTab.addFolder({ title: "Rendering" });
+
+    // Create AA control
+    const aaControl = renderingFolder.addBinding(msh3js.options, "sampleCount", {
+      label: "Anti-Aliasing",
+      // Set initial options based on the currently selected API
+      options: msh3js._supportedFeatures[msh3js.options.renderingAPI].sampleCountOptions,
+    }).on("change", async () => {
+      if (msh3js.debug) console.log("tweakpane::Sample count set to:", msh3js.options.sampleCount);
+      await msh3js.recreateRenderer();
+      if (msh3js.three.msh.length > 0) {
+        for (const material of msh3js.three.msh.at(-1).materials) {
+          if (material.transparent) {
+            // Enable alphaToCoverage for MSAA transparency
+            material.three.alphaToCoverage = true;
+            material.three.needsUpdate = true;
+          }
+        }
+      }
+    });
+
+    // Pixel Ratio Slider for performance tuning.
+    renderingFolder
+      .addBinding(msh3js.options, "pixelRatio", {
+        label: "Pixel Ratio",
+        min: 0.25,
+        max: 3.0,
+        step: 0.25,
+      })
+      .on("change", async () => {
+        if (msh3js.debug) console.log("tweakpane::Pixel ratio set to:", msh3js.options.pixelRatio);
+        msh3js.three.renderer.setPixelRatio(msh3js.options.pixelRatio);
+        msh3js.resize();
+      });
+
+    // GPU Preference Control (high-performance vs low-power).
+    renderingFolder
+      .addBinding(msh3js.options, "preferredGPU", {
+        label: "GPU Preference",
+        options: {
+          default: "default",
+          low: "low-power",
+          high: "high-performance",
+        },
+      })
+      .on("change", async () => {
+        if (msh3js.debug) console.log("tweakpane::GPU Preference set to:", msh3js.options.preferredGPU);
+        await msh3js.recreateRenderer();
+      });
+
+    // Stats toggle to show/hide the performance monitor.
+    renderingFolder
+      .addBinding(msh3js.options, "showStats", {
+        label: "Show Stats",
+      })
+      .on("change", async () => {
+        await msh3js.initStats(msh3js.options.showStats); // Toggle stats
+        if (msh3js.debug) console.log("tweakpane::Show stats set to:", msh3js.options.showStats);
+      });
+
+    // Preferences Folder for saving and clearing settings.
+    const preferencesFolder = appSettingsTab.addFolder({
+      title: "Preferences",
+      expanded: true,
+    });
+
+    // Dropdown to select the UI font.
+    preferencesFolder.addBinding(msh3js.options, 'tweakpaneFont', {
+      label: 'UI Font',
+      options: {
+        Orbitron: 'Orbitron',
+        Aurebesh: 'Aurebesh',
+        System: 'sans-serif',
+      },
+    }).on('change', (ev) => {
+      // Update the CSS variable on the container to change the font.
+      if (msh3js._tweakpaneContainer) {
+        msh3js._tweakpaneContainer.style.setProperty('--tweakpane-font', ev.value);
+      }
+      if (msh3js.debug) console.log("tweakpane::Font set to:", ev.value);
+    });
+
+    // Button to save current app options to localStorage.
+    const saveBtn = preferencesFolder.addButton({
+      title: "Save",
+      label: "Options",
+    });
+    saveBtn.on("click", () => {
+      if (msh3js._supportedFeatures.localStorage === true) {
+        try {
+          window.localStorage.setItem("msh3js_options", JSON.stringify(msh3js.options));
+          if (msh3js.debug) console.log("tweakpane::User preferences saved.");
+        } catch (error) {
+          console.error("tweakpane::Error saving user preferences:", error);
+        }
+      }
+    });
+
+    // Button to clear saved preferences from localStorage.
+    const cacheBtn = preferencesFolder.addButton({
+      title: "Clear",
+      label: "",
+    });
+    cacheBtn.on("click", () => {
+      try {
+        if (msh3js._serviceWorker) {
+          msh3js._serviceWorker.postMessage({ action: "clearCache" });
+        }
+        if (msh3js._supportedFeatures.localStorage) {
+          window.localStorage.removeItem("msh3js_options");
+          if (msh3js.debug) console.log("tweakpane::User preferences cleared.");
+        }
+      } catch (error) {
+        console.error("tweakpane::Error clearing user preferences:", error);
       }
     });
 
@@ -1319,6 +1389,23 @@ const msh3js = {
     msh3js.pane = pane;
     if (msh3js.debug)
       console.log("initTweakpane::Tweakpane controls created:", pane);
+
+    if (msh3js._tweakpaneContainer) {
+      // Re-add draggable and resizable listeners to the container now that the pane is rebuilt.
+      msh3js.manageListeners("add", "draggable", msh3js._tweakpaneContainer);
+      msh3js.manageListeners("add", "resizable", msh3js._tweakpaneContainer);
+
+      // Set a max-height and enable scrolling on the Tweakpane root element.
+      // This ensures the entire panel is constrained and its content will scroll correctly.
+      const tweakpaneRoot = msh3js._tweakpaneContainer.querySelector('.tp-rotv');
+      if (tweakpaneRoot) {
+        tweakpaneRoot.style.maxHeight = 'calc(100vh - 40px)'; // Adjust 40px to account for top/bottom margin
+        tweakpaneRoot.style.overflowY = 'auto';
+      }
+
+      // Apply font settings
+      msh3js._tweakpaneContainer.style.setProperty('--tweakpane-font', msh3js.options.tweakpaneFont);
+    }
 
     // Refresh the pane to ensure all bindings and visibility states are up-to-date.
     msh3js.pane.refresh();
@@ -1332,77 +1419,61 @@ const msh3js = {
     // If there's a mixer, update it. The speed is handled by mixer.timeScale.
     if (msh3js.three.mixer) msh3js.three.mixer.update(elapsedTime);
 
-    const refractiveMeshes = [];
-
-    // Update scrolling textures
-    if (msh3js.three.msh.length > 0) {
-      for (const msh of msh3js.three.msh) {
-        // Animate materials
-        for (const material of msh.materials) {
-          // Collect refractive meshes for the cubecam update
-          if (material.matd?.atrb?.renderFlags?.refracted) {
-            msh.group.traverse((child) => {
-              if (child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three))
-                refractiveMeshes.push(child);
-            });
-          }
-          // Handle scrolling textures
-          if (material.scrolling && material.three.map?.userData.isScrolling) {
-            const scrollData = material.three.map.userData;
-            // Use an internal timer to ensure frame-rate independence
-            scrollData._scrollTimeU = (scrollData._scrollTimeU + scrollData.scrollSpeedU * elapsedTime) % 1.0;
-            scrollData._scrollTimeV = (scrollData._scrollTimeV + scrollData.scrollSpeedV * elapsedTime) % 1.0;
-            material.three.map.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
-            // Also scroll the specularMap if it exists and is marked for scrolling
-            if (material.three.specularMap?.userData.isScrolling) {
-              material.three.specularMap.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
-            }
-          }
-          // Handle animated textures
-          if (material.three.map?.userData.isAnimated) {
-            const animData = material.three.map.userData;
-            const { gridSize, totalFrames, fps } = animData;
-            animData._animationTime += elapsedTime; // Use internal timer
-            const frameDuration = 1 / fps;
-            const currentFrame = Math.floor(animData._animationTime / frameDuration) % totalFrames;
-
-            const row = Math.floor(currentFrame / gridSize);
-            const col = currentFrame % gridSize;
-
-            // The UVs are mapped to the first cell, so we just need to offset.
-            material.three.map.offset.x = (col / gridSize);
-            material.three.map.offset.y = -(row / gridSize); // Negative offset to move "down" the texture
-
-            // Also animate the specularMap if it exists and is marked for animation
-            if (material.three.specularMap?.userData.isAnimated) {
-              material.three.specularMap.offset.copy(material.three.map.offset);
-            }
-          }
-          // Handle pulsating materials
-          if (material.pulsate && !material.three.userData.alwaysOn && material.three.userData.pulseSpeed) {
-            const { minBrightness, pulseSpeed } = material.three.userData;
-            // Scale the raw pulseSpeed (0-255) down to a reasonable frequency for the sine wave.
-            const pulse = (1 + Math.sin(time / 1000 * (pulseSpeed / 2))) / 2; // Oscillates between 0 and 1
-            const brightness = minBrightness + pulse * (1.0 - minBrightness);
-            material.three.color.setScalar(brightness);
-          }
-        }
-        // Update cloth simulation if enabled
-        if (msh3js.options.clothSim) {
-          if (msh.clothSimulations && msh.clothSimulations.length > 0) {
-            for (const clothSim of msh.clothSimulations) {
-              msh3js.updateClothSimulation(clothSim, elapsedTime);
-            }
-          }
+    // --- Update Dynamic Materials ---
+    // Handle scrolling textures
+    for (const material of msh3js.three.dynamic.scrollingMaterials) {
+      if (material.three.map?.userData.isScrolling) {
+        const scrollData = material.three.map.userData;
+        scrollData._scrollTimeU = (scrollData._scrollTimeU + scrollData.scrollSpeedU * elapsedTime) % 1.0;
+        scrollData._scrollTimeV = (scrollData._scrollTimeV + scrollData.scrollSpeedV * elapsedTime) % 1.0;
+        material.three.map.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
+        if (material.three.specularMap?.userData.isScrolling) {
+          material.three.specularMap.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
         }
       }
     }
-    msh3js.renderTime = time;
 
+    // Handle animated textures
+    for (const material of msh3js.three.dynamic.animatedMaterials) {
+      const animData = material.three.map.userData;
+      const { gridSize, totalFrames, fps } = animData;
+      animData._animationTime += elapsedTime;
+      const frameDuration = 1 / fps;
+      const currentFrame = Math.floor(animData._animationTime / frameDuration) % totalFrames;
+
+      const row = Math.floor(currentFrame / gridSize);
+      const col = currentFrame % gridSize;
+
+      material.three.map.offset.x = (col / gridSize);
+      material.three.map.offset.y = -(row / gridSize);
+
+      if (material.three.specularMap?.userData.isAnimated) {
+        material.three.specularMap.offset.copy(material.three.map.offset);
+      }
+    }
+
+    // Handle pulsating materials
+    for (const material of msh3js.three.dynamic.pulsatingMaterials) {
+      if (!material.three.userData.alwaysOn && material.three.userData.pulseSpeed) {
+        const { minBrightness, pulseSpeed } = material.three.userData;
+        const pulse = (1 + Math.sin(time / 1000 * (pulseSpeed / 2))) / 2;
+        const brightness = minBrightness + pulse * (1.0 - minBrightness);
+        material.three.color.setScalar(brightness);
+      }
+    }
+
+    // --- Update Cloth Simulations ---
+    if (msh3js.options.clothSim) {
+      for (const clothSim of msh3js.three.dynamic.clothMeshes) {
+        msh3js.updateClothSimulation(clothSim, elapsedTime);
+      }
+    }
+
+    // Update controls
     msh3js.three.orbitControls.update();
 
-    // Update the cube camera for refraction, only if refractive meshes exist
-    if (msh3js.three.cubeCamera && refractiveMeshes.length > 0) {
+    // Update the cube camera for refraction if refractive meshes exist
+    if (msh3js.three.dynamic.refractiveMeshes.length > 0 && msh3js.three.cubeCamera) {
       // Check if the camera has moved since the last frame
       let cameraMoved = false;
       if (msh3js.three.lastCameraPosition && msh3js.three.lastCameraQuaternion) {
@@ -1420,44 +1491,46 @@ const msh3js = {
         // Calculate the center of all refractive objects
         const center = new THREE.Vector3();
         const box = new THREE.Box3();
-        for (const mesh of refractiveMeshes) box.expandByObject(mesh);
+        for (const mesh of msh3js.three.dynamic.refractiveMeshes) box.expandByObject(mesh);
         box.getCenter(center);
         msh3js.three.cubeCamera.position.copy(center);
 
-        // Hide refractive objects
-        for (const mesh of refractiveMeshes) mesh.visible = false;
+        // Hide refractive objects before rendering the cubemap
+        for (const mesh of msh3js.three.dynamic.refractiveMeshes) mesh.visible = false;
 
         // Update the cubemap
         msh3js.three.cubeCamera.update(msh3js.three.renderer, msh3js.three.scene);
+
+        // IMPORTANT: After updating the cubecam, set the render target back to the default framebuffer (the screen).
+        msh3js.three.renderer.setRenderTarget(null);
 
         // Store the new camera state for the next frame's comparison
         msh3js.three.lastCameraPosition.copy(msh3js.three.camera.position);
         msh3js.three.lastCameraQuaternion.copy(msh3js.three.camera.quaternion);
 
         // Show refractive objects again
-        for (const mesh of refractiveMeshes) mesh.visible = true;
+        for (const mesh of msh3js.three.dynamic.refractiveMeshes) mesh.visible = true;
       }
     }
+
     // Clear color buffer
     msh3js.three.renderer.clear(true, true, true);
 
     // Render a frame
-    msh3js.three.renderer.render(
-      msh3js.three.scene,
-      msh3js.three.camera
-    );
+    msh3js.three.renderer.render(msh3js.three.scene, msh3js.three.camera);
 
-    if (msh3js.options.enableViewHelper === true) {
-      if (msh3js.three.viewHelper) {
-        msh3js.three.renderer.clearDepth();
-        msh3js.three.viewHelper.render();
-      }
+    // Update the view helper
+    if (msh3js.options.enableViewHelper === true && msh3js.three.viewHelper) {
+      msh3js.three.renderer.clearDepth();
+      msh3js.three.viewHelper.render();
     }
 
-    if (msh3js.options.showStats === true) {
-      if (msh3js.stats != null)
-        msh3js.stats.update();
-    }
+    // Update stats
+    if (msh3js.options.showStats === true && msh3js.stats != null) 
+      msh3js.stats.update();
+
+    // Save rendertime
+    msh3js.renderTime = time;
   },
 
   // Determines if canvas and app are out of sync and resizes if so
@@ -1516,11 +1589,6 @@ const msh3js = {
       if (msh3js.options.enableViewHelper === true)
         msh3js.three.viewHelper.update();
 
-      // Resize splashScreen
-      if (msh3js.splashScreen !== null) {
-        msh3js.splashScreen.setAttribute("width", msh3js.size.width + "px");
-        msh3js.splashScreen.setAttribute("height", msh3js.size.height + "px");
-      }
       return true;
     }
     return false;
@@ -1571,6 +1639,7 @@ const msh3js = {
             sceneInfo: mshScene.userData.sceneInfo,
             group: mshScene,
             hasCloth: mshScene.userData.hasCloth,
+            hasSkeleton: mshScene.userData.hasSkeleton,
             hasShadowVolume: mshScene.userData.hasShadowVolume,
             hasVertexColors: mshScene.userData.hasVertexColors,
             animations: mshScene.userData.animations,
@@ -1610,6 +1679,12 @@ const msh3js = {
               // Ensure world matrices are up-to-date before calculations
               msh3js.three.scene.updateMatrixWorld(true);
 
+              // Detach hp_active from its current parent (the newMshScene group)
+              // to prevent creating a cyclical dependency in the scene graph.
+              if (hpActive.parent) {
+                hpActive.parent.remove(hpActive);
+              }
+
               // Get the world matrices of the hardpoints
               const hpWeaponsMatrix = hpWeapons.matrixWorld.clone();
               const hpActiveMatrix = hpActive.matrixWorld.clone();
@@ -1629,18 +1704,20 @@ const msh3js = {
         // After adding the scene, traverse it to find a SkinnedMesh and create a SkeletonHelper
         if (mshFilesToProcess.length > 0) {
           for (const msh of msh3js.three.msh) {
-            if (msh3js.three.skeletonHelper) break; // A helper already exists.
-            msh.group.traverse((child) => {
-              // Create one helper for the first SkinnedMesh found
-              if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
-                msh3js.three.scene.updateMatrixWorld(true);
-                const helper = new THREE.SkeletonHelper(child);
-                helper.name = "skeletonHelper";
-                helper.visible = msh3js.options.showSkeleton;
-                msh3js.three.scene.add(helper);
-                msh3js.three.skeletonHelper = helper;
-              }
-            });
+            if (msh.hasSkeleton) {
+              if (msh3js.three.skeletonHelper) break; // A helper already exists.
+              msh.group.traverse((child) => {
+                // Create one helper for the first SkinnedMesh found
+                if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
+                  msh3js.three.scene.updateMatrixWorld(true);
+                  const helper = new THREE.SkeletonHelper(child);
+                  helper.name = "skeletonHelper";
+                  helper.visible = msh3js.options.showSkeleton;
+                  msh3js.three.scene.add(helper);
+                  msh3js.three.skeletonHelper = helper;
+                }
+              });
+            }
           }
         }
         fileProcessed = true;
@@ -1674,7 +1751,8 @@ const msh3js = {
 
                 // Find materials using this texture and add the bump map requirement
                 for (const material of mshData.materials) {
-                  if (material.matd?.tx0d?.toLowerCase() === `${textureName}.tga`) {
+                  if (material.matd?.tx0d?.toLowerCase() === `${textureName}.tga` &&
+                    (!material.matd.atrb.renderFlags.lightMap || !material.matd.atrb.renderFlags.detail)) {
                     material.matd.tx1d = bumpTextureName; // This will be picked up by the texture loader.
                     mshData.requiredTextures.push(bumpTextureName);
                   }
@@ -1799,6 +1877,7 @@ const msh3js = {
                       material.three.envMap.mapping = THREE.CubeRefractionMapping;
                       material.three.refractionRatio = 0.9;
                       material.three.combine = THREE.MixOperation; // Blend with base color
+                      msh3js.three.dynamic.refractiveMeshes.push(...msh.group.children.filter(child => child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three)));
                       if (msh3js.debug) console.log('processFiles::Refraction enabled for material:', material.name);
                     }
 
@@ -2005,6 +2084,13 @@ const msh3js = {
     msh3js.ui.materials = [];
 
     // Populate msh3js.ui elements w/msh data
+    // Also clear and repopulate dynamic material lists for the render loop
+    msh3js.three.dynamic.scrollingMaterials = [];
+    msh3js.three.dynamic.animatedMaterials = [];
+    msh3js.three.dynamic.pulsatingMaterials = [];
+    msh3js.three.dynamic.refractiveMeshes = [];
+    msh3js.three.dynamic.clothMeshes = [];
+
     for (const msh of msh3js.three.msh) {
       for (const material of msh.materials) {
         msh3js.ui.materials.push(material);
@@ -2012,6 +2098,24 @@ const msh3js = {
       msh.group.traverse((childObj) => { if (childObj.isMesh) msh3js.ui.models.push(childObj); });
     }
     msh3js.ui.mshName = msh3js.three.msh.at(-1).fileName;
+
+    // Populate dynamic material lists for render loop optimization
+    for (const material of msh3js.ui.materials) {
+      if (material.scrolling) msh3js.three.dynamic.scrollingMaterials.push(material);
+      if (material.three.map?.userData.isAnimated) msh3js.three.dynamic.animatedMaterials.push(material);
+      if (material.pulsate) msh3js.three.dynamic.pulsatingMaterials.push(material);
+      if (material.matd?.atrb?.renderFlags?.refracted) {
+        for (const msh of msh3js.three.msh) {
+          msh.group.traverse((child) => {
+            if (child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three)) {
+              msh3js.three.dynamic.refractiveMeshes.push(child);
+            }
+          });
+        }
+      }
+    }
+    if (msh3js.debug) console.log("processFiles::Dynamic material lists populated:", msh3js.three.dynamic);
+
     msh3js.ui.mshSize = msh3js.three.msh.at(-1).fileSize;
     msh3js.ui.mshLastModified = new Date(msh3js.three.msh.at(-1).lastModified).toLocaleString();
     msh3js.ui.sceneName = msh3js.three.msh.at(-1).sceneInfo.name;
@@ -2034,6 +2138,18 @@ const msh3js = {
       if (msh3js.pane) msh3js.pane.refresh(); // Update the UI checkbox
       await msh3js.initClothSimulations(); // Start the simulation immediately
     }
+
+    // Rebuild Tweakpane pane if already present for msh tab
+    if (msh3js.pane != null) await msh3js.initTweakpane();
+    if (msh3js.debug) console.log("processFiles::Files processed:", msh3js._files);
+
+    // Cleanup URLs after loading is complete
+    for (const fileObj of Object.values(msh3js._files)) {
+      URL.revokeObjectURL(fileObj.url);
+      fileObj.url = null;
+    }
+
+    msh3js.hideLoadingBar();
 
     // If a file was processed, update scene-dependent elements like light helpers
     if (fileProcessed) {
@@ -2071,60 +2187,26 @@ const msh3js = {
       msh3js.three.dirLightHelper2.visible = msh3js.options.enableDirLightHelper2;
       msh3js.three.scene.add(msh3js.three.dirLightHelper2);
     }
-    // Refresh Tweakpane pane if already present
-    if (msh3js.pane != null) await msh3js.initTweakpane();
-    if (msh3js.debug) console.log("processFiles::Files processed:", msh3js._files);
 
-    // Cleanup URLs after loading is complete
-    for (const fileObj of Object.values(msh3js._files)) {
-      URL.revokeObjectURL(fileObj.url);
-      fileObj.url = null;
-    }
-
-    msh3js.hideLoadingBar();
     // Return true if at least one file was processed
     return fileProcessed;
   },
 
-  // Get launch fileHandles from launchQueue and populate msh3js.files
-  /* deprecated
-  async getLaunchFiles() {
-    if (!window.launchQueue) {
-      if (msh3js.debug) console.log("getLaunchFiles::launchQueue API not supported.");
-      return Promise.resolve(false);
-    }
+  // Process MSH
+  async processMSH() {
 
-    return new Promise(resolve => {
-      let timeoutId = null;
-
-      // Set a small timeout to resolve the promise if no files are launched.
-      // This prevents the app from hanging on a normal launch.
-      timeoutId = setTimeout(() => {
-        if (msh3js.debug) console.log("getLaunchFiles::No launch files detected within timeout.");
-        resolve(false);
-      }, 250); // A short delay is enough to catch a file-based launch.
-
-      window.launchQueue.setConsumer(async (launchParams) => {
-        // If the consumer is called, we have launch files.
-        // Clear the timeout so it doesn't also try to resolve the promise.
-        if (timeoutId) clearTimeout(timeoutId);
-
-        if (launchParams.files && launchParams.files.length > 0) {
-          if (msh3js.debug) console.log("getLaunchFiles::App launched with files:", launchParams.files);
-
-          const files = [];
-          for (const fileHandle of launchParams.files) {
-            files.push(await fileHandle.getFile());
-          }
-          msh3js.addFiles(files);
-
-          // Resolve with true, indicating files were processed on launch.
-          resolve(true);
-        }
-      });
-    });
   },
-  */
+
+  // Process texture and apply to material(s)
+  async processTGA() {
+
+  },
+
+  // Mutate material properties depending on rendertype
+  processMaterial() {
+    // Only directly mutate material properties if NOT using webGPU.
+    // Otherwise, clone, mutate, reassign, dispose of old.
+  },
 
   // Create renderer using passed params and return it along with its context and canvas
   async createRenderer(
@@ -2139,12 +2221,13 @@ const msh3js = {
       canvas: null,
     }
   ) {
-    if (params.renderingAPI == null) params.renderingAPI = msh3js._supportedFeatures.webGL2.supported ? "webgl2" : "webgl";
+
+    if (params.renderingAPI == null) params.renderingAPI = msh3js.options.renderingAPI;
     if (params.size == null) params.size = msh3js.size ?? { width: 1, height: 1 };
     if (params.pixelRatio == null) params.pixelRatio = msh3js.options.pixelRatio ?? 1.0;
     if (params.GPU == null) params.GPU = msh3js.options.preferredGPU ?? "default";
     if (params.AA == null) params.AA = msh3js.options.aa ?? false;
-    if (params.sampleCount == null) params.sampleCount = msh3js.options.sampleCount ?? 1;
+    if (params.sampleCount == null) params.sampleCount = msh3js.options.sampleCount ?? 0;
     if (params.reverseDepth == null) params.reverseDepth = msh3js._useReverseDepth ?? false;
 
     // Populate params
@@ -2173,17 +2256,39 @@ const msh3js = {
     };
 
     if (msh3js.debug)
-      console.log("createRenderer::Renderer Params: ", rendererParams);
+      console.log("createRenderer::Requested API:", params.renderingAPI, "\nRenderer Params:", params);
 
     try {
-      newRenderer = new THREE.WebGLRenderer(rendererParams);
-      newContext = newRenderer.getContext();
-      newRenderer.debug = {
-        checkShaderErrors: msh3js.debug,
-        onShaderError: null
-      };
+      if (params.renderingAPI === 'webgpu' && msh3js._supportedFeatures.webgpu.supported) {
+        // WebGPU Renderer
+        rendererParams.antialias = params.AA; // WebGPURenderer uses a boolean for antialias
+        newRenderer = new WebGPURenderer(rendererParams);
+        await newRenderer.init();
+        newContext = newRenderer.getContext(); // The context is available after init
+        // For WebGPURenderer, sampleCount is set at initialization. No post-init call is needed.
+      } else {
+        // WebGL/WebGL2 Renderer
+        if (params.renderingAPI === 'webgl2' && !msh3js._supportedFeatures.webgl2.supported) {
+          console.warn("createRenderer::WebGL2 not supported, falling back to WebGL.");
+          params.renderingAPI = 'webgl';
+        }
+        rendererParams.antialias = params.AA;
+        rendererParams.sampleCount = params.sampleCount;
+        rendererParams.reverseDepthBuffer = params.reverseDepth;
+        rendererParams.useLegacyLights = true;
+
+        newRenderer = new THREE.WebGLRenderer(rendererParams);
+        newContext = newRenderer.getContext();
+        newRenderer.debug = {
+          checkShaderErrors: msh3js.debug,
+          onShaderError: null
+        };
+      }
     } catch (e) {
-      console.error("createRenderer::Error initializing WebGLRenderer:", e);
+      console.error(`createRenderer::Error initializing ${params.renderingAPI} renderer:`, e);
+      // Fallback logic could be added here if initialization fails
+      alert(`Failed to create the ${params.renderingAPI} renderer. Please check console for errors.`);
+      return {};
     }
 
     newRenderer.setSize(params.size.width, params.size.height, false);
@@ -2198,9 +2303,7 @@ const msh3js = {
     msh3js.canvas = newCanvas;
 
     if (msh3js.debug) {
-      let rendererType = "WebGL";
-      if (params.renderingAPI === "webgl2") rendererType = "WebGL2";
-      console.log("createRenderer::New", rendererType, "renderer created:", newRenderer);
+      console.log(`createRenderer::New ${params.renderingAPI.toUpperCase()} renderer created:`, newRenderer);
     }
     return { renderer: newRenderer, context: newContext, canvas: newCanvas };
   },
@@ -2233,7 +2336,8 @@ const msh3js = {
     }
     // Release context
     if (msh3js.context) {
-      msh3js.context.finish();
+      if (msh3js.options.renderingAPI !== 'webgpu')
+        msh3js.context.finish();
       msh3js.context = null;
     }
     if (msh3js.debug) console.log("recreateRenderer::Context released.");
@@ -2352,13 +2456,11 @@ const msh3js = {
     msh3js.three.scene.add(msh3js.three.dirLightHelper);
 
     // Add directional light 2
-    msh3js.three.dirLight2 = new THREE.DirectionalLight(0xaaaaff, 0.0);
+    msh3js.three.dirLight2 = new THREE.DirectionalLight(msh3js.options.dirLight2Color, msh3js.options.dirLight2Intensity);
     msh3js.three.dirLight2.name = "directionalLight2";
     msh3js.three.dirLight2.target.name = "directionalLight2Target";
     msh3js.three.dirLight2.castShadow = false;
-    msh3js.three.dirLight2.position.set(-msh3js.three.dirLight.position.x, // Inverse direction of dirLight by default
-      -msh3js.three.dirLight.position.y, -msh3js.three.dirLight.position.z);
-    msh3js.three.dirLight2.target.position.set(0, 0, 0);
+    msh3js.calculateLightPosition(msh3js.three.dirLight2, msh3js.options.dirLight2Azimuth, msh3js.options.dirLight2Elevation);
     msh3js.three.scene.add(msh3js.three.dirLight2);
     msh3js.three.scene.add(msh3js.three.dirLight2.target);
 
@@ -2477,7 +2579,7 @@ const msh3js = {
     const depthRatio = msh3js.three.camera.far / msh3js.three.camera.near;
     if (depthRatio > 8000) { // Reverse depth threshold
       let canUseReverseDepth = false;
-      if (msh3js._supportedFeatures.webGL2.supported || msh3js._supportedFeatures.webGL.reverseDepth) {
+      if (msh3js._supportedFeatures.webgl2.supported || msh3js._supportedFeatures.webgl.reverseDepth) {
         canUseReverseDepth = true;
       }
 
@@ -2550,8 +2652,8 @@ const msh3js = {
     if (msh3js.three.renderer == null) {
       console.warn(
         "createViewHelper::No renderer present!");
-      const { renderer, context } = await msh3js.createRenderer({
-        renderingAPI: msh3js._supportedFeatures.webGL2.supported ? "webgl2" : "webgl",
+      const { renderer, context } = await msh3js.createRenderer({ // Use the user-selected API
+        renderingAPI: msh3js.options.renderingAPI,
         size: msh3js.size,
         pixelRatio: msh3js.options.pixelRatio,
         GPU: msh3js.options.preferredGPU,
@@ -2675,9 +2777,9 @@ const msh3js = {
       animFileInput.type = "file";
       animFileInput.style.display = "none";
       animFileInput.multiple = true;
-      animFileInput.accept = ".msh";
+      animFileInput.accept = ".msh"; // Only accept msh files
       msh3js._appContainer.appendChild(animFileInput);
-      animFileInput.addEventListener("change", msh3js.handleAnimationFileInput);
+      msh3js.manageListeners("add", "animFileInput", animFileInput);
     } catch (e) { console.error("createAnimationFileInput::Error creating file input:", e); }
     return animFileInput;
   },
@@ -2705,7 +2807,7 @@ const msh3js = {
       // Accept common image formats supported by THREE's loaders
       bgFileInput.accept = "image/png, image/jpeg, image/jpg, image/webp, .tga, .exr, .hdr";
       msh3js._appContainer.appendChild(bgFileInput);
-      bgFileInput.addEventListener("change", msh3js.handleBackgroundImageInput, { once: true });
+      msh3js.manageListeners("add", "bgFileInput", bgFileInput, { once: true });
     } catch (e) { console.error("createBackgroundImageInput::Error creating file input:", e); }
 
     return bgFileInput;
@@ -2718,37 +2820,6 @@ const msh3js = {
 
     const fileURL = URL.createObjectURL(file);
     msh3js.loadAndSetBackground(fileURL, file.name.toLowerCase());
-  },
-
-  // Generates an AA control for tweakpane
-  generateAAControl(sampleCountOptions = null, renderingFolder = null) {
-    if (sampleCountOptions && renderingFolder) {
-      // Anti-Aliasing Selection List
-      const aaControl = renderingFolder
-        .addBinding(msh3js.options, "sampleCount", {
-          index: 0,
-          label: "Anti-Aliasing",
-          options: sampleCountOptions,
-        })
-        .on("change", async () => {
-          msh3js.options.aa = msh3js.options.sampleCount > 0; // Toggle AA based on sampleCount
-          if (msh3js.debug)
-            console.log("Anti-Aliasing mode set to:", msh3js.options.sampleCount, "x");
-          // Recreate canvas/context with new parameters
-          await msh3js.recreateRenderer();
-          if (msh3js.options.sampleCount > 0) {
-            if (msh3js.three.msh.length > 0) {
-              for (const material of msh3js.three.msh.at(-1).materials) {
-                if (material.transparent) {
-                  material.three.alphaToCoverage = true;
-                  material.three.needsUpdate = true;
-                }
-              }
-            }
-          }
-        });
-      return aaControl;
-    }
   },
 
   // Calculate directional light positions
@@ -2984,6 +3055,8 @@ const msh3js = {
     if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
 
     // Dynamically import MeshBVH if not already loaded
+    // Clear the dynamic list at the start, as this function is the single source of truth for cloth simulations.
+    msh3js.three.dynamic.clothMeshes = [];
     let MeshBVH;
     if (msh3js._modules.MeshBVH) {
       MeshBVH = msh3js._modules.MeshBVH;
@@ -3000,19 +3073,21 @@ const msh3js = {
     }
 
     for (const msh of msh3js.three.msh) {
-      msh.clothSimulations = []; // Always re-initialize or clear existing simulations for this MSH
-
-      const clothMeshes = [];
       const collisionObjects = [];
 
+      // First, find all potential collision objects in the current msh group.
       msh.group.traverse((obj) => {
-        if (obj.isMesh) {
-          if (obj.userData.isCloth) {
-            clothMeshes.push(obj);
-          } else if (obj.name.toLowerCase().startsWith("c_")) {
-            collisionObjects.push(obj);
-          }
+        if (obj.isMesh && obj.name.toLowerCase().startsWith("c_")) {
+          collisionObjects.push(obj);
         }
+      });
+
+      // Only search for cloth meshes if the msh is flagged as having cloth.
+      if (!msh.hasCloth) continue;
+
+      const clothMeshes = [];
+      msh.group.traverse((obj) => {
+        if (obj.isMesh && obj.userData.isCloth) clothMeshes.push(obj);
       });
 
       // Build BVH for all collision objects
@@ -3159,12 +3234,13 @@ const msh3js = {
           }
         }
 
-        msh.clothSimulations.push({
+        const newClothMesh = {
           mesh: clothMesh,
           particles: particles,
           constraints: constraints,
           collisionObjects: collisionObjects,
-        });
+        };
+        msh3js.three.dynamic.clothMeshes.push(newClothMesh);
 
         if (msh3js.debug) {
           console.log(`Cloth simulation initialized for ${clothMesh.name}:`, {
@@ -3182,29 +3258,29 @@ const msh3js = {
   resetClothSimulations() {
     if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
 
-    for (const msh of msh3js.three.msh) {
-      if (msh.clothSimulations) {
-        for (const clothSim of msh.clothSimulations) {
-          const geometry = clothSim.mesh.geometry;
-          const positionAttr = geometry.getAttribute('position');
+    if (msh3js.three.dynamic.clothMeshes.length > 0) {
+      for (const clothSim of msh3js.three.dynamic.clothMeshes) {
+        const geometry = clothSim.mesh.geometry;
+        const positionAttr = geometry.getAttribute('position');
 
-          for (let i = 0; i < clothSim.particles.length; i++) {
-            const particle = clothSim.particles[i];
-            positionAttr.setXYZ(
-              i,
-              particle.originalPosition.x,
-              particle.originalPosition.y,
-              particle.originalPosition.z
-            );
-            particle.position.copy(particle.originalPosition);
-            particle.previousPosition.copy(particle.originalPosition);
-            particle.velocity.set(0, 0, 0);
-          }
-
-          positionAttr.needsUpdate = true;
-          geometry.computeVertexNormals();
+        for (let i = 0; i < clothSim.particles.length; i++) {
+          const particle = clothSim.particles[i];
+          positionAttr.setXYZ(
+            i,
+            particle.originalPosition.x,
+            particle.originalPosition.y,
+            particle.originalPosition.z
+          );
+          particle.position.copy(particle.originalPosition);
+          particle.previousPosition.copy(particle.originalPosition);
+          particle.velocity.set(0, 0, 0);
         }
+
+        positionAttr.needsUpdate = true;
+        geometry.computeVertexNormals();
       }
+      // Clear the list after resetting all simulations
+      msh3js.three.dynamic.clothMeshes = [];
     }
   },
 
@@ -3380,6 +3456,7 @@ const msh3js = {
   async getSupportedGraphicsFeatures(canvases = null) {
     let webglCanvas;
     let webgl2Canvas;
+    let webgpuCanvas;
 
     if (canvases) {
       // Get passed canvases if present
@@ -3393,13 +3470,21 @@ const msh3js = {
         webgl2Canvas = msh3js.createCanvas({
           id: "webgl2Canvas",
         }, false);
+      if (canvases.webgpuCanvas) webgpuCanvas = canvases.webgpuCanvas;
+      else
+        webgpuCanvas = msh3js.createCanvas({
+          id: "webgpuCanvas",
+        }, false);
     } else {
-      // Create canvases if not passed
+      // Create canvases if none passed
       webglCanvas = msh3js.createCanvas({
         id: "webglCanvas",
       }, false);
       webgl2Canvas = msh3js.createCanvas({
         id: "webgl2Canvas",
+      }, false);
+      webgpuCanvas = msh3js.createCanvas({
+        id: "webgpuCanvas",
       }, false);
     }
 
@@ -3409,21 +3494,27 @@ const msh3js = {
         webglCanvas.getContext("webgl") ||
         webglCanvas.getContext("experimental-webgl")
       ) {
-        msh3js._supportedFeatures.webGL.supported = true;
+        msh3js._supportedFeatures.webgl.supported = true;
 
         // Check for AA support in webgl
         let gl = webglCanvas.getContext("webgl", { antialias: true });
         if (gl) {
           const att = gl.getContextAttributes();
-          msh3js._supportedFeatures.webGL.aa = att.antialias === true;
-          msh3js._supportedFeatures.webGL.maxSamples = 2;
+          msh3js._supportedFeatures.webgl.aa = att.antialias === true;
+          msh3js._supportedFeatures.webgl.maxSamples = 2;
         } else {
           gl = webglCanvas.getContext("webgl", { antialias: false });
         }
 
         // Check for reverse depth buffer support
         const extClipControl = gl.getExtension("EXT_clip_control");
-        if (extClipControl) msh3js._supportedFeatures.webGL.reverseDepth = true;
+        if (extClipControl) msh3js._supportedFeatures.webgl.reverseDepth = true;
+
+        // Populate sampleCountOptions for WebGL
+        msh3js._supportedFeatures.webgl.sampleCountOptions = [{ text: 'Off', value: 0 }];
+        if (msh3js._supportedFeatures.webgl.aa) {
+          msh3js._supportedFeatures.webgl.sampleCountOptions.push({ text: 'On', value: 2 }); // WebGL 1 is effectively on/off
+        }
 
         gl.finish(); // Let browser know we're done with this context
         gl = null; // Release context
@@ -3435,29 +3526,40 @@ const msh3js = {
       if (msh3js.debug)
         console.log(
           "getSupportedGraphicsFeatures::WebGL support:",
-          msh3js._supportedFeatures.webGL.supported,
+          msh3js._supportedFeatures.webgl.supported,
           "\nWebGL AA support:",
-          msh3js._supportedFeatures.webGL.aa,
+          msh3js._supportedFeatures.webgl.aa,
           "\nWebGL Reverse depth buffer support:",
-          msh3js._supportedFeatures.webGL.reverseDepth
+          msh3js._supportedFeatures.webgl.reverseDepth
         );
     }
 
     try {
       // Detect WebGL2 Support
       if (webgl2Canvas.getContext("webgl2")) {
-        msh3js._supportedFeatures.webGL2.supported = true;
-        msh3js._supportedFeatures.webGL2.reverseDepth = true;
+        msh3js._supportedFeatures.webgl2.supported = true;
+        msh3js._supportedFeatures.webgl2.reverseDepth = true;
 
         // Check for AA support in webgl2 and get max samples
         let gl2 = webgl2Canvas.getContext("webgl2", { antialias: true });
         if (gl2) {
           const att = gl2.getContextAttributes();
-          msh3js._supportedFeatures.webGL2.aa = att.antialias === true;
-          msh3js._supportedFeatures.webGL2.maxSamples = gl2.getParameter(gl2.MAX_SAMPLES);
+          msh3js._supportedFeatures.webgl2.aa = att.antialias === true;
+          msh3js._supportedFeatures.webgl2.maxSamples = gl2.getParameter(gl2.MAX_SAMPLES);
         } else {
-          msh3js._supportedFeatures.webGL2.aa = false;
+          msh3js._supportedFeatures.webgl2.aa = false;
           gl2 = webgl2Canvas.getContext("webgl2", { antialias: false });
+        }
+
+        // Populate sampleCountOptions for WebGL2
+        msh3js._supportedFeatures.webgl2.sampleCountOptions = [{ text: 'Off', value: 0 }];
+        if (msh3js._supportedFeatures.webgl2.aa) {
+          // WebGL2 supports multiple sample counts, usually powers of 2 up to maxSamples.
+          for (let i = 2; i <= msh3js._supportedFeatures.webgl2.maxSamples; i *= 2) {
+            msh3js._supportedFeatures.webgl2.sampleCountOptions.push({
+              text: `${i}x`, value: i
+            });
+          }
         }
 
         gl2.finish(); // Finished with this context
@@ -3470,34 +3572,81 @@ const msh3js = {
       if (msh3js.debug)
         console.log(
           "getSupportedGraphicsFeatures::WebGL2 support:",
-          msh3js._supportedFeatures.webGL2.supported,
+          msh3js._supportedFeatures.webgl2.supported,
           "\nWebGL2 AA support:",
-          msh3js._supportedFeatures.webGL2.aa,
+          msh3js._supportedFeatures.webgl2.aa,
           "\nWebGL2 max AA samples:",
-          msh3js._supportedFeatures.webGL2.maxSamples,
+          msh3js._supportedFeatures.webgl2.maxSamples,
         );
     }
-    webglCanvas = null;
-    webgl2Canvas = null;
 
-    // AA sample count options for each API
-    msh3js._supportedFeatures.webGL.sampleCountOptions = [{ text: "Disabled", value: 0 }];
-    msh3js._supportedFeatures.webGL2.sampleCountOptions = [{ text: "Disabled", value: 0 }];
+    try {
+      // Detect WebGPU Support
+      if (navigator.gpu) {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (adapter) {
+          msh3js._supportedFeatures.webgpu.supported = true;
+          msh3js._supportedFeatures.webgpu.reverseDepth = true; // WebGPU supports this natively
 
-    if (msh3js._supportedFeatures.webGL.aa === true)
-      msh3js._supportedFeatures.webGL.sampleCountOptions.push({ text: "2x", value: 2 });
+          const device = await adapter.requestDevice();
+          if (device) {
+            const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+            const potentialSampleCounts = [2, 4, 8, 16];
+            let maxSamples = 1;
+            const supportedSampleCounts = [1]; // Start with 1 as a baseline
 
-    if (msh3js._supportedFeatures.webGL2.aa === true)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "2x", value: 2 });
+            // To find the exact supported sample counts, we must try to create a render pipeline
+            // for each count and see if it succeeds.
+            const shaderModule = device.createShaderModule({
+              code: `
+                @vertex fn main_vs() -> @builtin(position) vec4<f32> {
+                  return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+                }
+                @fragment fn main_fs() -> @location(0) vec4<f32> {
+                  return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+                }`
+            });
 
-    if (msh3js._supportedFeatures.webGL2.maxSamples >= 4)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "4x", value: 4 });
+            for (const count of potentialSampleCounts) {
+              try {
+                await device.createRenderPipelineAsync({
+                  vertex: { module: shaderModule, entryPoint: 'main_vs' },
+                  fragment: { module: shaderModule, entryPoint: 'main_fs', targets: [{ format: preferredFormat }] },
+                  primitive: { topology: 'triangle-list' },
+                  multisample: { count },
+                  layout: 'auto'
+                });
+                // If it succeeds, the count is supported
+                maxSamples = Math.max(maxSamples, count);
+                supportedSampleCounts.push(count);
+              } catch (e) {
+                // This sample count is not supported, just continue to the next one.
+                if (msh3js.debug) console.warn(`WebGPU MSAA check: Sample count ${count} is not supported.`);
+              }
+            }
+            msh3js._supportedFeatures.webgpu.aa = maxSamples > 1;
+            msh3js._supportedFeatures.webgpu.maxSamples = maxSamples;
+            msh3js._supportedFeatures.webgpu.supportedSampleCounts = supportedSampleCounts; // Store all supported counts
 
-    if (msh3js._supportedFeatures.webGL2.maxSamples >= 8)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "8x", value: 8 });
-
-    if (msh3js._supportedFeatures.webGL2.maxSamples >= 16)
-      msh3js._supportedFeatures.webGL2.sampleCountOptions.push({ text: "16x", value: 16 });
+            // Populate sampleCountOptions for WebGPU
+            msh3js._supportedFeatures.webgpu.sampleCountOptions = [{ text: 'Off', value: 0 }];
+            if (msh3js._supportedFeatures.webgpu.aa) {
+              // Filter out 1 and add the rest
+              supportedSampleCounts.filter(c => c > 1).forEach(count => {
+                msh3js._supportedFeatures.webgpu.sampleCountOptions.push({ text: `${count}x`, value: count });
+              });
+            }
+            device.destroy();
+          }
+        }
+      }
+    } catch (e) {
+      if (msh3js.debug)
+        console.error("getSupportedGraphicsFeatures::WebGPU error: ", e);
+    } finally {
+      if (msh3js.debug)
+        console.log("getSupportedGraphicsFeatures::WebGPU support:", msh3js._supportedFeatures.webgpu.supported, "\nWebGPU AA support:", msh3js._supportedFeatures.webgpu.aa, "\nWebGPU max AA samples:", msh3js._supportedFeatures.webgpu.maxSamples, "\nWebGPU Reverse depth buffer support:", msh3js._supportedFeatures.webgpu.reverseDepth);
+    }
 
   },
 
@@ -3516,8 +3665,10 @@ const msh3js = {
   },
 
   // Manages listeners by group (renderTrigger, resize, fileDrop) and action (add/remove)
-  manageListeners(action, group) {
-    if (msh3js.debug) console.log("manageListeners::params::action:", action, "group:", group);
+  manageListeners(action, group, element = null, options = {}) {
+    // Filter out noisy logs for drag/resize events from debug
+    if (msh3js.debug && !['dragMove', 'dragClickCapture', 'resizeMove'].includes(group))
+      console.log("manageListeners::params::action:", action, "group:", group);
 
     if (group === "fileDropCanvas") {
       const dropZone = msh3js.canvas ?? msh3js._appContainer.getElementById("msh3jsCanvas") ?? msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height });
@@ -3577,6 +3728,152 @@ const msh3js = {
         }
       } else {
         console.warn("manageListeners::Unknown action:", action);
+      }
+    } else if (group === "serviceWorker") {
+      if (action === "add") {
+        if (!msh3js._listeners.serviceWorker) {
+          const handler = (event) => {
+            if (event.data && event.data.action === 'reload') {
+              console.log('Service Worker requested page reload.');
+              window.location.reload();
+            }
+          };
+          navigator.serviceWorker.addEventListener('message', handler);
+          msh3js._listeners.serviceWorker = handler;
+        }
+      } else if (action === "remove") {
+        if (msh3js._listeners.serviceWorker) {
+          navigator.serviceWorker.removeEventListener('message', msh3js._listeners.serviceWorker);
+          msh3js._listeners.serviceWorker = null;
+        }
+      }
+    } else if (group === "animFileInput") {
+      if (!element) return;
+      if (action === "add") {
+        if (!msh3js._listeners.animFileInput) {
+          element.addEventListener("change", msh3js.handleAnimationFileInput);
+          msh3js._listeners.animFileInput = msh3js.handleAnimationFileInput;
+        }
+      } else if (action === "remove") {
+        if (msh3js._listeners.animFileInput) {
+          element.removeEventListener("change", msh3js._listeners.animFileInput);
+          msh3js._listeners.animFileInput = null;
+        }
+      }
+    } else if (group === "bgFileInput") {
+      if (!element) return;
+      if (action === "add") {
+        if (!msh3js._listeners.bgFileInput) {
+          element.addEventListener("change", msh3js.handleBackgroundImageInput, options);
+          msh3js._listeners.bgFileInput = msh3js.handleBackgroundImageInput;
+        }
+      } else if (action === "remove") {
+        if (msh3js._listeners.bgFileInput) {
+          // Note: Removing a 'once' listener before it fires can be tricky.
+          // In this app's flow, the element is recreated each time, so direct removal isn't critical.
+          // For robustness, one might store the specific handler instance if it needed to be removed mid-lifecycle.
+          element.removeEventListener("change", msh3js._listeners.bgFileInput);
+          msh3js._listeners.bgFileInput = null;
+        }
+      }
+    } else if (group === "draggable") {
+      if (!element) return;
+      if (action === "add") {
+        if (!msh3js._listeners.draggable.has(element)) {
+          const handlers = {
+            mouseover: msh3js._draggableMouseOver.bind(msh3js, element),
+            dragStart: msh3js._draggableDragStart.bind(msh3js, element),
+          };
+          element.addEventListener('mouseover', handlers.mouseover);
+          element.addEventListener('mousedown', handlers.dragStart);
+          element.addEventListener('touchstart', handlers.dragStart, { passive: false });
+          msh3js._listeners.draggable.set(element, handlers);
+        }
+      } else if (action === "remove") {
+        const handlers = msh3js._listeners.draggable.get(element);
+        if (handlers) {
+          element.removeEventListener('mouseover', handlers.mouseover);
+          element.removeEventListener('mousedown', handlers.dragStart);
+          element.removeEventListener('touchstart', handlers.dragStart);
+          msh3js._listeners.draggable.delete(element);
+          msh3js._draggableStates.delete(element);
+        }
+      }
+    } else if (group === "resizable") {
+      if (!element) return;
+      if (action === "add") {
+        if (!msh3js._listeners.resizable.has(element)) {
+          const handlers = {
+            mouseMoveCursor: msh3js._resizableMouseMoveCursor.bind(msh3js, element),
+            mouseDown: msh3js._resizableMouseDown.bind(msh3js, element),
+          };
+          element.addEventListener('mousemove', handlers.mouseMoveCursor);
+          element.addEventListener('mousedown', handlers.mouseDown);
+          msh3js._listeners.resizable.set(element, handlers);
+        }
+      } else if (action === "remove") {
+        const handlers = msh3js._listeners.resizable.get(element);
+        if (handlers) {
+          element.removeEventListener('mousemove', handlers.mouseMoveCursor);
+          element.removeEventListener('mousedown', handlers.mouseDown);
+          msh3js._listeners.resizable.delete(element);
+          msh3js._resizableStates.delete(element);
+        }
+      }
+    } else if (group === "dragMove") {
+      if (action === "add") {
+        if (!this._listeners.dragMove) {
+          const moveHandler = this._draggableDragMove.bind(this, element);
+          const endHandler = this._draggableDragEnd.bind(this, element);
+          document.addEventListener('mousemove', moveHandler);
+          document.addEventListener('mouseup', endHandler);
+          document.addEventListener('touchmove', moveHandler, { passive: false });
+          document.addEventListener('touchend', endHandler);
+          this._listeners.dragMove = { moveHandler, endHandler };
+        }
+      } else if (action === "remove") {
+        if (this._listeners.dragMove) {
+          document.removeEventListener('mousemove', this._listeners.dragMove.moveHandler);
+          document.removeEventListener('mouseup', this._listeners.dragMove.endHandler);
+          document.removeEventListener('touchmove', this._listeners.dragMove.moveHandler);
+          document.removeEventListener('touchend', this._listeners.dragMove.endHandler);
+          this._listeners.dragMove = null;
+        }
+      }
+    } else if (group === "resizeMove") {
+      if (action === "add") {
+        if (!this._listeners.resizeMove) {
+          const moveHandler = this._resizableMouseMove.bind(this, element);
+          const upHandler = this._resizableMouseUp.bind(this, element);
+          document.addEventListener('mousemove', moveHandler);
+          document.addEventListener('mouseup', upHandler);
+          this._listeners.resizeMove = { moveHandler, upHandler };
+        }
+      } else if (action === "remove") {
+        if (this._listeners.resizeMove) {
+          document.removeEventListener('mousemove', this._listeners.resizeMove.moveHandler);
+          document.removeEventListener('mouseup', this._listeners.resizeMove.upHandler);
+          this._listeners.resizeMove = null;
+        }
+      }
+    } else if (group === "dragClickCapture") {
+      if (action === "add") {
+        if (!this._listeners.dragClickCapture) {
+          const handler = (ev) => {
+            if (this._draggableStates.get(element)?.hasDragged) {
+              ev.stopPropagation();
+            }
+            // Self-removing listener
+            this.manageListeners('remove', 'dragClickCapture', element);
+          };
+          element.addEventListener('click', handler, { capture: true });
+          this._listeners.dragClickCapture = handler;
+        }
+      } else if (action === "remove") {
+        if (this._listeners.dragClickCapture) {
+          element.removeEventListener('click', this._listeners.dragClickCapture, { capture: true });
+          this._listeners.dragClickCapture = null;
+        }
       }
     } else { console.warn("manageListeners::Unknown group:", group); }
   },
@@ -3640,161 +3937,148 @@ const msh3js = {
     if (msh3js.debug) console.log("hideLoadingBar::Hiding loading bar.");
   },
 
-  // Makes an HTML element draggable.
-  makeDraggable(element) {
-    let isDragging = false; // Is a drag operation in progress?
-    let hasDragged = false; // Did the mouse move enough to be considered a drag?
-    let offsetX = 0;
-    let offsetY = 0;
-    const startPos = { x: 0, y: 0 };
-    const dragThreshold = 5; // Minimum pixels to move before it's a drag
+  // Fetches files from an array of URLs and processes them.
+  async loadFromUrls(urls) {
+    if (msh3js.debug) console.log("loadFromUrls::Loading from URLs:", urls);
 
-    // Set cursor to 'grab' on hover over the title bar
-    element.addEventListener('mouseover', (e) => {
-      const target = e.target;
-      if (target.classList.contains('tp-rotv_t')) {
-        target.style.cursor = 'grab';
-      }
-    });
+    const files = [];
+    // Show loading bar for the number of URLs
+    msh3js.showLoadingBar(urls.length);
 
-    const onDragStart = (e) => {
-      // Use the first touch point for touch events, or the mouse event itself
-      const point = e.touches ? e.touches[0] : e;
-
-      // Only start dragging if the click is on the pane's title bar or a folder header
-      const target = e.target;
-      if (target.classList.contains('tp-rotv_t')) {
-        isDragging = true;
-        hasDragged = false; // Reset on new mousedown
-        startPos.x = point.clientX;
-        startPos.y = point.clientY;
-        offsetX = point.clientX - element.getBoundingClientRect().left;
-        offsetY = point.clientY - element.getBoundingClientRect().top;
-
-        document.addEventListener('mousemove', onDragMove);
-        document.addEventListener('mouseup', onDragEnd);
-        document.addEventListener('touchmove', onDragMove, { passive: false });
-        document.addEventListener('touchend', onDragEnd);
-
-        target.style.cursor = 'grabbing'; // Set cursor to 'grabbing' while dragging
-        // Add a capture-phase click listener to intercept the click before Tweakpane does.
-        element.addEventListener('click', onClickCapture, { capture: true });
-      }
-    };
-
-    const onDragMove = (e) => {
-      if (!isDragging) return;
-
-      // Prevent scrolling during drag on touch devices
-      if (e.touches) e.preventDefault();
-
-      const point = e.touches ? e.touches[0] : e;
-
-      // Check if the mouse has moved beyond the threshold
-      if (!hasDragged) {
-        const dx = point.clientX - startPos.x;
-        const dy = point.clientY - startPos.y;
-        if (Math.sqrt(dx * dx + dy * dy) > dragThreshold) {
-          hasDragged = true;
+    // Use Promise.all to fetch all files in parallel for better performance.
+    await Promise.all(urls.map(async (url) => {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status} for URL: ${url}`);
         }
+        const blob = await response.blob();
+        // Extract filename from the URL path.
+        const fileName = url.substring(url.lastIndexOf('/') + 1);
+        // Create a File object, which is what addFiles and processFiles expect.
+        files.push(new File([blob], fileName, { type: blob.type }));
+        // We call updateLoadingBar here, but it will appear to update all at once
+        // because of Promise.all. This is visually fine.
+        msh3js.updateLoadingBar();
+      } catch (error) {
+        console.error(`loadFromUrls::Failed to fetch ${url}:`, error);
+        msh3js.updateLoadingBar(); // Still update the bar on error to not get stuck
       }
+    }));
 
-      const parentRect = msh3js._appContainer.getBoundingClientRect();
-      const elementRect = element.getBoundingClientRect();
-
-      // Calculate the new position relative to the viewport
-      const newLeft = point.clientX - offsetX;
-      const newTop = point.clientY - offsetY;
-
-      // Clamp the position within the parent container's bounds, accounting for the parent's position.
-      element.style.left = `${Math.max(parentRect.left, Math.min(newLeft, parentRect.right - elementRect.width)) - parentRect.left}px`;
-      element.style.top = `${Math.max(parentRect.top, Math.min(newTop, parentRect.bottom - elementRect.height)) - parentRect.top}px`;
-    };
-
-    const onDragEnd = () => {
-      isDragging = false;
-      document.removeEventListener('mousemove', onDragMove);
-      document.removeEventListener('mouseup', onDragEnd);
-      document.removeEventListener('touchmove', onDragMove);
-      document.addEventListener('touchend', onDragEnd);
-      document.body.style.cursor = ''; // Reset cursor on drag end
-    };
-
-    element.addEventListener('mousedown', onDragStart);
-    element.addEventListener('touchstart', onDragStart, { passive: false });
-
-    const onClickCapture = (e) => {
-      // If a drag occurred, stop the click event from reaching Tweakpane.
-      if (hasDragged) {
-        e.stopPropagation();
-      }
-      // This listener should only run once per mousedown, so remove it immediately.
-      element.removeEventListener('click', onClickCapture, { capture: true });
-    };
-    if (msh3js.debug) console.log("makeDraggable::Element is now draggable:", element);
+    if (files.length > 0) {
+      msh3js.addFiles(files);
+      await msh3js.processFiles(msh3js._files);
+    }
   },
 
-  // Makes an HTML element resizable from its right edge.
-  makeResizable(element) {
-    const minWidth = 240;
-    const handleWidth = 8; // Increased handle area for easier grabbing
+  // --- Draggable Handlers ---
+  _draggableMouseOver(element, e) {
+    const target = e.target;
+    if (target.classList.contains('tp-rotv_t')) {
+      target.style.cursor = 'grab';
+    }
+  },
 
-    let isResizing = false;
-    let startX = 0;
-    let startWidth = 0;
+  _draggableDragStart(element, e) {
+    const target = e.target;
+    if (!target.classList.contains('tp-rotv_t')) return;
 
-    // This function checks the mouse position and changes the cursor.
-    const onMouseMoveCursor = (e) => {
-      if (isResizing) return; // Don't change cursor while actively resizing
+    const point = e.touches ? e.touches[0] : e;
+    const state = {
+      isDragging: true,
+      hasDragged: false,
+      startPos: { x: point.clientX, y: point.clientY },
+      offsetX: point.clientX - element.getBoundingClientRect().left,
+      offsetY: point.clientY - element.getBoundingClientRect().top,
+      dragThreshold: 5
+    };
+    this._draggableStates.set(element, state);
 
-      const rect = element.getBoundingClientRect();
-      // Check if the mouse is over the right edge.
-      // We use clientX and rect.right for viewport-relative coordinates.
-      if (e.clientX >= rect.right - handleWidth && e.clientX <= rect.right) {
-        element.style.cursor = 'ew-resize';
+    this.manageListeners('add', 'dragMove', element);
+    this.manageListeners('add', 'dragClickCapture', element);
+    target.style.cursor = 'grabbing';
+  },
+
+  _draggableDragMove(element, e) {
+    const state = this._draggableStates.get(element);
+    if (!state?.isDragging) return;
+
+    if (e.touches) e.preventDefault();
+
+    const point = e.touches ? e.touches[0] : e;
+
+    if (!state.hasDragged) {
+      const dx = point.clientX - state.startPos.x;
+      const dy = point.clientY - state.startPos.y;
+      if (Math.sqrt(dx * dx + dy * dy) > state.dragThreshold) {
+        state.hasDragged = true;
       }
+    }
+
+    const parentRect = this._appContainer.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const newLeft = point.clientX - state.offsetX;
+    const newTop = point.clientY - state.offsetY;
+
+    element.style.left = `${Math.max(parentRect.left, Math.min(newLeft, parentRect.right - elementRect.width)) - parentRect.left}px`;
+    element.style.top = `${Math.max(parentRect.top, Math.min(newTop, parentRect.bottom - elementRect.height)) - parentRect.top}px`;
+  },
+
+  _draggableDragEnd(element) {
+    const state = this._draggableStates.get(element);
+    if (state) state.isDragging = false;
+
+    this.manageListeners('remove', 'dragMove', element);
+    document.body.style.cursor = '';
+  },
+
+  // --- Resizable Handlers ---
+  _resizableMouseMoveCursor(element, e) {
+    const state = this._resizableStates.get(element);
+    if (state?.isResizing) return;
+
+    const rect = element.getBoundingClientRect();
+    const handleWidth = 8;
+    if (e.clientX >= rect.right - handleWidth && e.clientX <= rect.right) {
+      element.style.cursor = 'ew-resize';
+    } else {
+      element.style.cursor = ''; // Reset if not on the edge
+    }
+  },
+
+  _resizableMouseDown(element, e) {
+    if (element.style.cursor !== 'ew-resize') return;
+
+    const state = {
+      isResizing: true,
+      startX: e.clientX,
+      startWidth: element.offsetWidth,
+      minWidth: 240,
     };
+    this._resizableStates.set(element, state);
 
-    const onMouseDown = (e) => {
-      // Only start resizing if the cursor is the resize cursor.
-      if (element.style.cursor === 'ew-resize') {
-        isResizing = true;
-        startX = e.clientX;
-        startWidth = element.offsetWidth;
+    e.preventDefault();
+    e.stopPropagation();
 
-        // Prevent text selection and other default behaviors during resize.
-        e.preventDefault();
-        e.stopPropagation();
+    this.manageListeners('add', 'resizeMove', element);
+  },
 
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-      }
-    };
+  _resizableMouseMove(element, e) {
+    const state = this._resizableStates.get(element);
+    if (!state?.isResizing) return;
 
-    const onMouseMove = (e) => {
-      if (!isResizing) return;
+    const dx = e.clientX - state.startX;
+    let newWidth = state.startWidth + dx;
+    newWidth = Math.max(state.minWidth, newWidth);
+    element.style.width = `${newWidth}px`;
+  },
 
-      const dx = e.clientX - startX;
-      let newWidth = startWidth + dx;
+  _resizableMouseUp(element) {
+    const state = this._resizableStates.get(element);
+    if (state) state.isResizing = false;
 
-      // Enforce minimum width
-      newWidth = Math.max(minWidth, newWidth);
-
-      element.style.width = `${newWidth}px`;
-    };
-
-    const onMouseUp = () => {
-      if (!isResizing) return;
-      isResizing = false;
-
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-
-    // Listen for mouse movement over the element to change the cursor.
-    element.addEventListener('mousemove', onMouseMoveCursor);
-    element.addEventListener('mousedown', onMouseDown);
-    if (msh3js.debug) console.log("makeResizable::Element is now resizable:", element);
+    this.manageListeners('remove', 'resizeMove', element);
   },
 };
 

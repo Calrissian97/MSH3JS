@@ -90,7 +90,8 @@
       position: absolute;
       bottom: 30px;
       right: 30px;
-      display: none; /* Hidden by default, will be set to 'flex' by JS */
+      display: none;
+      /* Hidden by default, will be set to 'flex' by JS */
       z-index: 2;
       align-items: center;
       color: #FFFFFF;
@@ -115,6 +116,26 @@
       /* Initially dim */
       transition: opacity 0.9s ease;
     }
+
+    /* Custom scrollbar for Tweakpane root container */
+    .tp-rotv::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .tp-rotv::-webkit-scrollbar-track {
+      background: var(--tp-input-background-color, #1a1a1a);
+      border-radius: 4px;
+    }
+
+    .tp-rotv::-webkit-scrollbar-thumb {
+      background-color: var(--tp-container-foreground-color, #808080);
+      border-radius: 4px;
+      border: 2px solid var(--tp-input-background-color, #1a1a1a);
+    }
+
+    .tp-rotv::-webkit-scrollbar-thumb:hover {
+      background-color: var(--tp-button-background-color, #999999);
+    }
   </style>
 </head>
 
@@ -124,6 +145,7 @@
       {
         "imports": {
           "three": "https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.module.min.js",
+          "three/nodes": "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/nodes/Nodes.js",
           "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/",
           "webgl-lint": "https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js",
           "stats-gl": "https://cdn.jsdelivr.net/npm/stats-gl/dist/main.min.js",
@@ -146,14 +168,69 @@
   <script type="module">
     // App object/namespace for application state and data
     import msh3js from "msh3js";
-
     // When HTML is loaded...
     document.addEventListener("DOMContentLoaded", async () => {
       if (msh3js.debug) console.log("HTML loaded");
       // Get canvas element
       const canvas = document.getElementById("msh3jsCanvas");
       // Set app options
-      const options = {};
+      const options = {
+        AA: null, // {boolean} Enable/disable anti-aliasing. Overrides sampleCount if set to false.
+        AAsampleCount: null, // {number} Desired anti-aliasing sample count (e.g., 0, 2, 4, 8). 0 disables AA.
+        // Note: Will be adjusted to the closest supported value for the chosen rendering API.
+        ambLightColor: null, // {string} Hex color string for the ambient light (e.g., "#4d4d4d").
+        ambLightIntensity: null, // {number} Intensity of the ambient light (e.g., 1.0).
+        autoRotate: null, // {boolean} Enable/disable automatic rotation of the camera.
+        autoRotateSpeed: null, // {number} Speed of auto-rotation (e.g., 0.5).
+        backgroundColor: null, // {string} Hex color string for the scene background (e.g., "#000000").
+        backgroundImage: null, // {string} URL or path to a background image (e.g., "test.png").
+        /* bloom: {
+          enabled: null, // {boolean} Enable/disable the bloom post-processing effect.
+          threshold: null, // {number} Luminance threshold for bloom (0.0 - 1.0).
+          strength: null, // {number} Strength of the bloom effect (0.0 - 3.0).
+          radius: null, // {number} Radius of the bloom effect (0.0 - 1.0).
+        }, */
+        /* cloth: {
+          enabled: null, // {boolean} Enable/disable cloth simulations.
+          windSpeed: null, // {number} Speed of the wind affecting cloth (0.0 - 10.0).
+          windDirection: null, // {number} Direction of the wind in degrees (0 - 360).
+        }, */
+        controlDamping: null, // {boolean} Enable/disable damping for camera controls.
+        /* dirLight1: {
+          color: null, // {string} Hex color string for the primary directional light.
+          intensity: null, // {number} Intensity of the primary directional light.
+          azimuth: null, // {number} Azimuth angle in degrees (0 - 360) for primary light direction.
+          elevation: null, // {number} Elevation angle in degrees (-90 - 90) for primary light direction.
+        }, */
+        /* dirLight2: {
+          color: null, // {string} Hex color string for the secondary directional light.
+          intensity: null, // {number} Intensity of the secondary directional light.
+          azimuth: null, // {number} Azimuth angle in degrees (0 - 360) for secondary light direction.
+          elevation: null, // {number} Elevation angle in degrees (-90 - 90) for secondary light direction.
+        }, */
+        displayHelpers: null, // {boolean} If true, enables dirLight, dirLight2, ViewHelper, Grid, and Skeleton helpers.
+        displayShadows: null, // {boolean} Enable/disable shadows.
+        displayStats: null, // {boolean} Show/hide the performance stats panel.
+        displayTweakpane: null, // {boolean} Show/hide the Tweakpane UI.
+        GPU: null, // {string} "default", "low-power", or "high-performance".
+        pixelRatio: null, // {number} Device pixel ratio multiplier (e.g., 1.0, 2.0).
+        renderingAPI: null, // {string} "webgl", "webgl2", or "webgpu". Will fall back if not supported.
+        tweakpaneFont: null, // {string} Font family name for Tweakpane (e.g., "Orbitron", "Aurebesh", "sans-serif").
+        /* viewHelperColors: {
+          x: null, // {number} Hex color for the X-axis (e.g., 0xAA0000).
+          y: null, // {number} Hex color for the Y-axis (e.g., 0x00AA00).
+          z: null, // {number} Hex color for the Z-axis (e.g., 0x0000AA).
+        }, */
+        /* xr: {
+          AR: null, // {boolean} Enable/disable Augmented Reality (AR) viewing. (Currently disabled in Tweakpane for testing)
+          VR: null, // {boolean} Enable/disable Virtual Reality (VR) viewing. (Currently disabled in Tweakpane for testing)
+        }, */
+        /* size: {
+          width: null, // {string} CSS width value for the app container (e.g., "100%", "800px").
+          height: null, // {string} CSS height value for the app container (e.g., "100%", "600px").
+        }, */
+        urls: null, // {Array<string>} An array of URLs to MSH, TGA, or msh.option files to load.
+      };
       // Start App loop
       await msh3js.startApp(canvas, options);
     });
@@ -162,11 +239,14 @@
   <!-- Fallback app entry (UMD) -->
   <!-- Dependencies for the UMD build -->
   <script nomodule defer src="https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.min.js"></script>
-  <script nomodule defer src="https://cdn.jsdelivr.net/npm/three@0.151.0/examples/js/controls/OrbitControls.js"></script>
+  <script nomodule defer
+    src="https://cdn.jsdelivr.net/npm/three@0.151.0/examples/js/controls/OrbitControls.js"></script>
   <script nomodule defer src="https://cdn.jsdelivr.net/npm/three@0.151.0/examples/js/loaders/TGALoader.js"></script>
   <script nomodule defer src="https://cdn.jsdelivr.net/npm/stats-gl/dist/main.min.js"></script>
-  <script nomodule defer src="https://cdn.jsdelivr.net/npm/tweakpane@3/dist/tweakpane.min.js"></script> <!-- Use tweakpane v3 for umd builds -->
-  <script nomodule defer src="https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.umd.min.js"></script>
+  <script nomodule defer src="https://cdn.jsdelivr.net/npm/tweakpane@3/dist/tweakpane.min.js"></script>
+  <!-- Use tweakpane v3 for umd builds -->
+  <script nomodule defer
+    src="https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.umd.min.js"></script>
   <script nomodule defer src="https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js"></script>
   <script nomodule defer src="https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.4.0/build/index.umd.min.js"></script>
   <script nomodule defer src="./msh3js.umd.js"></script>
@@ -192,8 +272,7 @@
       }
     });
   </script>
-
-  <!-- Fallback for browsers with JavaScript disabled -->
+  <!-- Message for browsers with JavaScript disabled -->
   <noscript>
     <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
       <p style="color: white; font-family: sans-serif; text-align: center; padding: 2em;">
