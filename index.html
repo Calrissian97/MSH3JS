@@ -145,7 +145,6 @@
       {
         "imports": {
           "three": "https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.module.min.js",
-          "three/nodes": "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/nodes/Nodes.js",
           "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/",
           "webgl-lint": "https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js",
           "stats-gl": "https://cdn.jsdelivr.net/npm/stats-gl/dist/main.min.js",
@@ -214,7 +213,7 @@
         displayTweakpane: null, // {boolean} Show/hide the Tweakpane UI.
         GPU: null, // {string} "default", "low-power", or "high-performance".
         pixelRatio: null, // {number} Device pixel ratio multiplier (e.g., 1.0, 2.0).
-        renderingAPI: null, // {string} "webgl", "webgl2", or "webgpu". Will fall back if not supported.
+        renderingAPI: null, // {string} "webgl" or "webgl2". Will fall back if not supported.
         tweakpaneFont: null, // {string} Font family name for Tweakpane (e.g., "Orbitron", "Aurebesh", "sans-serif").
         /* viewHelperColors: {
           x: null, // {number} Hex color for the X-axis (e.g., 0xAA0000).

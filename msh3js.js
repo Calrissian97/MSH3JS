@@ -3,9 +3,8 @@
 // (c) 2025 by Landon Hull aka Calrissian97
 // This code is licensed under GPL 3.0
 
-// Module Imports -----------------------------------------------------------
+// Module Imports ------------------------------------------------------
 import * as THREE from "three";
-//import WebGPURenderer from "three/addons/renderers/webgpu/WebGPURenderer.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { MSHLoader } from "MSHLoader";
 import { TGALoader } from "three/addons/loaders/TGALoader.js";
@@ -41,8 +40,8 @@ const msh3js = {
     dirLight2Elevation: -30.0, // Set opposite of dirLight1 by default
     ambLightColor: "#4d4d4d", // Ambient light color
     ambLightIntensity: 1.0, // Ambient light intensity
-    enableViewHelper: false, // Visibility of view helper
-    viewHelperColors: { x: 0xAA0000, y: 0x00AA00, z: 0x0000AA }, // View helper colors
+    enableViewHelper: true, // Visibility of view helper
+    viewHelperColors: { x: "#AA0000", y: "#00AA00", z: "#0000AA" }, // View helper colors
     enableShadows: true, // Enable shadows
     preferredGPU: "high-performance", // GPU preference
     aa: false, // anti-aliasing flag
@@ -53,7 +52,7 @@ const msh3js = {
     clothSim: true, // Enable cloth simulation
     clothWindSpeed: 2.0, // Wind speed for cloth simulation
     clothWindDirection: 280.0, // Wind direction in degrees (0-360)
-    renderingAPI: 'webgl2', // webgl, webgl2, or webgpu
+    renderingAPI: 'webgl2', // webgl or webgl2
     tweakpaneFont: "Orbitron", // Font for Tweakpane UI
     AR: false, // Enable AR viewing
     VR: false, // Enable VR viewing
@@ -116,6 +115,7 @@ const msh3js = {
       pulsatingMaterials: [],
       refractiveMeshes: [],
       clothMeshes: [],
+      collisionObjects: [],
     },
   },
   // Proxy object(s) for tweakpane to decouple from three
@@ -126,6 +126,8 @@ const msh3js = {
     animationPlaying: false,
     animationLoop: true,
     textureURLs: [],
+    models: [],
+    materials: [],
   },
   // App rendering time
   renderTime: 0.0,
@@ -181,7 +183,6 @@ const msh3js = {
   _supportedFeatures: {
     webgl: { supported: false, aa: false, maxSamples: 0, reverseDepth: false, sampleCountOptions: [] }, // WebGL support flag
     webgl2: { supported: false, aa: false, maxSamples: 0, reverseDepth: true, sampleCountOptions: [] }, // WebGL2 support flag
-    webgpu: { supported: false, aa: false, maxSamples: 0, reverseDepth: true, sampleCountOptions: [] }, // WebGPU support flag
     localStorage: false, // LocalStorage support flag
     persistentStorage: false, // PersistentStorage support flag
     serviceWorker: false, // ServiceWorker support flag
@@ -231,64 +232,103 @@ const msh3js = {
     msh3js._tweakpaneContainer = params.tweakpaneContainer;
     msh3js._loadingBar.container = params.loadingContainer;
 
-    // Process passed app options (Overrides options from localStorage if present)
-    if (options.AA != null) msh3js.options.aa = options.AA;
-    if (options.AAsampleCount != null) msh3js.options.sampleCount = options.AAsampleCount;
-    if (options.AAsampleCount != null) msh3js.options.aa = options.AAsampleCount > 0;
-    if (options.ambLightColor != null) msh3js.options.ambLightColor = options.ambLightColor;
-    if (options.ambLightIntensity != null) msh3js.options.ambLightIntensity = options.ambLightIntensity;
-    if (options.autoRotate != null) msh3js.options.autoRotate = options.autoRotate;
-    if (options.autoRotateSpeed != null) msh3js.options.autoRotateSpeed = options.autoRotateSpeed;
-    if (options.backgroundColor != null) msh3js.options.backgroundColor = options.backgroundColor;
-    if (options.backgroundImage != null) msh3js.options.backgroundImage = options.backgroundImage;
+    // --- Process passed app options (Overrides options from localStorage if present) ---
+    // Helper function to validate and assign a value
+    const assignOption = (key, value, validator) => {
+      if (value != null && validator(value)) {
+        msh3js.options[key] = value;
+      } else if (value != null && msh3js.debug) {
+        console.warn(`initApp::Invalid value for option "${key}":`, value);
+      }
+    };
+
+    // Helper function to validate a hex color string
+    const isHexColor = (value) => typeof value === 'string' && /^#([0-9A-F]{3}){1,2}$/i.test(value);
+    // Helper function to validate a number within a range
+    const isNumberInRange = (min, max) => (value) => typeof value === 'number' && value >= min && value <= max;
+    // Helper function to validate a boolean
+    const isBoolean = (value) => typeof value === 'boolean';
+    // Helper function to validate a string
+    const isString = (value) => typeof value === 'string';
+
+    if (options.AA != null && isBoolean(options.AA)) msh3js.options.aa = options.AA;
+    if (options.AAsampleCount != null && isNumberInRange(0, 16)(options.AAsampleCount)) {
+      msh3js.options.sampleCount = options.AAsampleCount;
+      msh3js.options.aa = options.AAsampleCount > 0;
+    }
+    if (options.ambLightColor != null && isHexColor(options.ambLightColor)) msh3js.options.ambLightColor = options.ambLightColor;
+    if (options.ambLightIntensity != null && isNumberInRange(0, 10)(options.ambLightIntensity)) msh3js.options.ambLightIntensity = options.ambLightIntensity;
+    if (options.autoRotate != null && isBoolean(options.autoRotate)) msh3js.options.autoRotate = options.autoRotate;
+    if (options.autoRotateSpeed != null && isNumberInRange(0, 20)(options.autoRotateSpeed)) msh3js.options.autoRotateSpeed = options.autoRotateSpeed;
+    if (options.backgroundColor != null && isHexColor(options.backgroundColor)) msh3js.options.backgroundColor = options.backgroundColor;
+    if (options.backgroundImage != null && isString(options.backgroundImage)) msh3js.options.backgroundImage = options.backgroundImage;
+
     if (options.bloom) {
-      if (options.bloom.enabled != null) msh3js.options.bloomEnabled = options.bloom.enabled;
-      if (options.bloom.threshold != null) msh3js.options.bloomThreshold = options.bloom.threshold;
-      if (options.bloom.strength != null) msh3js.options.bloomStrength = options.bloom.strength;
-      if (options.bloom.radius != null) msh3js.options.bloomRadius = options.bloom.radius;
+      assignOption('bloomEnabled', options.bloom.enabled, isBoolean);
+      assignOption('bloomThreshold', options.bloom.threshold, isNumberInRange(0, 1));
+      assignOption('bloomStrength', options.bloom.strength, isNumberInRange(0, 3));
+      assignOption('bloomRadius', options.bloom.radius, isNumberInRange(0, 1));
     }
+
     if (options.cloth) {
-      if (options.cloth.enabled != null) msh3js.options.clothSim = options.cloth.enabled;
-      if (options.cloth.windSpeed != null) msh3js.options.clothWindSpeed = options.cloth.windSpeed;
-      if (options.cloth.windDirection != null) msh3js.options.clothWindDirection = options.cloth.windDirection;
+      assignOption('clothSim', options.cloth.enabled, isBoolean);
+      assignOption('clothWindSpeed', options.cloth.windSpeed, isNumberInRange(0, 10));
+      assignOption('clothWindDirection', options.cloth.windDirection, isNumberInRange(0, 360));
     }
-    if (options.controlDamping != null) msh3js.options.controlDamping = options.controlDamping;
+
+    assignOption('controlDamping', options.controlDamping, isBoolean);
+
     if (options.dirLight1) {
-      if (options.dirLight1.color != null) msh3js.options.dirLightColor = options.dirLight1.color;
-      if (options.dirLight1.intensity != null) msh3js.options.dirLightIntensity = options.dirLight1.intensity;
-      if (options.dirLight1.azimuth != null) msh3js.options.dirLightAzimuth = options.dirLight1.azimuth;
-      if (options.dirLight1.elevation != null) msh3js.options.dirLightElevation = options.dirLight1.elevation;
+      assignOption('dirLightColor', options.dirLight1.color, isHexColor);
+      assignOption('dirLightIntensity', options.dirLight1.intensity, isNumberInRange(0, 10));
+      assignOption('dirLightAzimuth', options.dirLight1.azimuth, isNumberInRange(0, 360));
+      assignOption('dirLightElevation', options.dirLight1.elevation, isNumberInRange(-90, 90));
     }
+
     if (options.dirLight2) {
-      if (options.dirLight2.color != null) msh3js.options.dirLight2Color = options.dirLight2.color;
-      if (options.dirLight2.intensity != null) msh3js.options.dirLight2Intensity = options.dirLight2.intensity;
-      if (options.dirLight2.azimuth != null) msh3js.options.dirLight2Azimuth = options.dirLight2.azimuth;
-      if (options.dirLight2.elevation != null) msh3js.options.dirLight2Elevation = options.dirLight2.elevation;
+      assignOption('dirLight2Color', options.dirLight2.color, isHexColor);
+      assignOption('dirLight2Intensity', options.dirLight2.intensity, isNumberInRange(0, 10));
+      assignOption('dirLight2Azimuth', options.dirLight2.azimuth, isNumberInRange(0, 360));
+      assignOption('dirLight2Elevation', options.dirLight2.elevation, isNumberInRange(-90, 90));
     }
-    if (options.displayHelpers != null) {
+
+    if (options.displayHelpers != null && isBoolean(options.displayHelpers)) {
       msh3js.options.enableDirLightHelper = options.displayHelpers;
       msh3js.options.enableDirLightHelper2 = options.displayHelpers;
       msh3js.options.enableViewHelper = options.displayHelpers;
       msh3js.options.enableGrid = options.displayHelpers;
       msh3js.options.showSkeleton = options.displayHelpers;
     }
-    if (options.displayShadows != null) msh3js.options.enableShadows = options.displayShadows;
-    if (options.displayStats != null) msh3js.options.showStats = options.displayStats;
-    if (options.displayTweakpane != null) msh3js.options.displayTweakpane = options.displayTweakpane;
-    if (options.GPU != null) msh3js.options.preferredGPU = options.GPU;
-    if (options.pixelRatio != null) msh3js.options.pixelRatio = options.pixelRatio;
-    if (options.renderingAPI != null) msh3js.options.renderingAPI = options.renderingAPI;
-    if (options.tweakpaneFont != null) msh3js.options.tweakpaneFont = options.tweakpaneFont;
+
+    assignOption('enableShadows', options.displayShadows, isBoolean);
+    assignOption('showStats', options.displayStats, isBoolean);
+    assignOption('displayTweakpane', options.displayTweakpane, isBoolean);
+
+    if (options.GPU != null && ['default', 'low-power', 'high-performance'].includes(options.GPU)) {
+      msh3js.options.preferredGPU = options.GPU;
+    }
+
+    assignOption('pixelRatio', options.pixelRatio, isNumberInRange(0.25, 3.0));
+
+    if (options.renderingAPI != null && ['webgl', 'webgl2'].includes(options.renderingAPI)) {
+      msh3js.options.renderingAPI = options.renderingAPI;
+    }
+
+    assignOption('tweakpaneFont', options.tweakpaneFont, isString);
+
     if (options.viewHelperColors) {
-      if (options.viewHelperColors.x != null) msh3js.options.viewHelperColors.x = options.viewHelperColors.x;
-      if (options.viewHelperColors.y != null) msh3js.options.viewHelperColors.y = options.viewHelperColors.y;
-      if (options.viewHelperColors.z != null) msh3js.options.viewHelperColors.z = options.viewHelperColors.z;
+      const isHexNumber = (v) => typeof v === 'number' && v >= 0 && v <= 0xFFFFFF;
+      if (options.viewHelperColors.x != null && isHexNumber(options.viewHelperColors.x)) msh3js.options.viewHelperColors.x = options.viewHelperColors.x;
+      if (options.viewHelperColors.y != null && isHexNumber(options.viewHelperColors.y)) msh3js.options.viewHelperColors.y = options.viewHelperColors.y;
+      if (options.viewHelperColors.z != null && isHexNumber(options.viewHelperColors.z)) msh3js.options.viewHelperColors.z = options.viewHelperColors.z;
     }
+
     if (options.xr) {
-      if (options.xr.AR != null) msh3js.options.AR = options.xr.AR;
-      if (options.xr.VR != null) msh3js.options.VR = options.xr.VR;
+      assignOption('AR', options.xr.AR, isBoolean);
+      assignOption('VR', options.xr.VR, isBoolean);
     }
-    if (options.size != null) {
+
+    if (options.size != null && isString(options.size.width) && isString(options.size.height)) {
       msh3js._appContainer.style.width = options.size.width;
       msh3js._appContainer.style.height = options.size.height;
     }
@@ -328,7 +368,7 @@ const msh3js = {
     if (!isPreferredApiSupported) {
       if (msh3js.debug) console.warn(`initApp::Preferred API "${preferredApi}" is not supported. Attempting to find a fallback.`);
       // Define a fallback order
-      const fallbackOrder = ['webgl2', 'webgl', 'webgpu'];
+      const fallbackOrder = ['webgl2', 'webgl'];
       let foundFallback = false;
       for (const api of fallbackOrder) {
         if (msh3js._supportedFeatures[api]?.supported) {
@@ -552,6 +592,27 @@ const msh3js = {
     msh3js.three.ambLight.color.set(msh3js.options.ambLightColor);
     msh3js.three.ambLight.intensity = msh3js.options.ambLightIntensity;
     msh3js.three.dirLight.color.set(msh3js.options.dirLightColor);
+
+    // Set shadowMap size based on renderer capabilities
+    if (msh3js.options.enableShadows === true) {
+      if (msh3js.three.renderer) {
+        const maxSize = msh3js.three.renderer.capabilities.maxTextureSize;
+        if (maxSize >= 4096) {
+          msh3js.three.dirLight.shadow.mapSize.width = 4096;
+          msh3js.three.dirLight.shadow.mapSize.height = 4096;
+          if (msh3js.debug) console.log("startThree::Shadow map size set to 4096");
+        } else if (maxSize >= 2048) {
+          msh3js.three.dirLight.shadow.mapSize.width = 2048;
+          msh3js.three.dirLight.shadow.mapSize.height = 2048;
+          if (msh3js.debug) console.log("startThree::Shadow map size set to 2048");
+        } else {
+          msh3js.three.dirLight.shadow.mapSize.width = 1024;
+          msh3js.three.dirLight.shadow.mapSize.height = 1024;
+          if (msh3js.debug) console.log("startThree::Shadow map size set to 1024");
+        }
+      }
+    }
+
     msh3js.three.dirLight.intensity = msh3js.options.dirLightIntensity;
     msh3js.three.dirLight2.color.set(msh3js.options.dirLight2Color);
     msh3js.three.dirLight2.intensity = msh3js.options.dirLight2Intensity;
@@ -568,7 +629,7 @@ const msh3js = {
     if (msh3js.three.renderer) {
       msh3js.three.renderer.setAnimationLoop(msh3js.render);
     }
-    if (msh3js.debug) console.log("startThree: Three.js started.");
+    if (msh3js.debug) console.log("startThree: Three.js started:", msh3js.three);
   },
 
   // Remove or add and return Stats.js
@@ -583,14 +644,6 @@ const msh3js = {
           const statsModule = await import("stats-gl");
           Stats = statsModule.default;
           msh3js._modules.Stats = Stats;
-        }
-
-        // For WebGPURenderer, we need to wait a frame to ensure all internal
-        // components, especially those for GPU queries, are fully initialized
-        // before stats-gl tries to access them.
-        if (msh3js.options.renderingAPI === 'webgpu') {
-          await new Promise(resolve => requestAnimationFrame(resolve));
-          if (msh3js.debug) console.log("initStats::Waited one frame for WebGPURenderer initialization.");
         }
 
         if (msh3js.three.renderer) {
@@ -693,7 +746,11 @@ const msh3js = {
 
       // Models Folder
       const modelsInMsh = [];
-      mshData.group.traverse((child) => { if (child.isMesh) modelsInMsh.push(child); });
+      mshData.group.traverse((child) => {
+        if (child.isMesh && !child.name.endsWith("_ShadowCaster")) {
+          modelsInMsh.push(child);
+        }
+      });
 
       if (modelsInMsh.length > 0) {
         const mshModelsFolder = mshFolder.addFolder({ title: "Models", expanded: false });
@@ -960,46 +1017,13 @@ const msh3js = {
       expanded: true,
     });
 
-    // Auto-Rotate toggle for the camera.
-    viewFolder // Controls for autorotate
-      .addBinding(msh3js.options, "autoRotate", { label: "Auto-Rotate" })
+    // Shadows
+    viewFolder
+      .addBinding(msh3js.options, "enableShadows", { label: "Show Shadows" })
       .on("change", () => {
-        if (msh3js.three.orbitControls) {
-          msh3js.three.orbitControls.autoRotate = msh3js.options.autoRotate;
-        }
-        if (msh3js.debug) console.log("tweakpane::AutoRotate set to:", msh3js.options.autoRotate ? "on" : "off");
-        // Show/hide speed control
-        if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
-      });
-
-    // Auto-Rotate speed slider.
-    const autoRotateSpeedControl = viewFolder // Controls for autorotate speed
-      .addBinding(msh3js.options, "autoRotateSpeed", {
-        label: "Auto-Rotate Speed",
-        min: 0.01,
-        max: 20,
-      })
-      .on("change", () => {
-        // Update autorotate speed directly on controls
-        if (msh3js.three.orbitControls) {
-          msh3js.three.orbitControls.autoRotateSpeed = msh3js.options.autoRotateSpeed;
-        }
-        if (msh3js.debug) console.log("tweakpane::AutoRotateSpeed set to:", msh3js.options.autoRotateSpeed);
-      });
-    // Hide initially if autoRotate is off
-    if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
-
-    viewFolder // Camera controls damping (inertia) toggle.
-      .addBinding(msh3js.options, "controlDamping", {
-        label: "Controls Damping",
-      })
-      .on("change", () => {
-        // Update damping directly on controls
-        if (msh3js.three.orbitControls) {
-          msh3js.three.orbitControls.enableDamping = msh3js.options.controlDamping;
-          msh3js.three.orbitControls.update(); // Apply change immediately if needed
-        }
-        if (msh3js.debug) console.log("tweakpane::Constrols damping set to:", msh3js.options.controlDamping ? "on" : "off");
+        msh3js.three.renderer.shadowMap.enabled = msh3js.options.enableShadows;
+        msh3js.three.dirLight.castShadow = msh3js.options.enableShadows;
+        if (msh3js.debug) console.log("tweakpane::Shadows set to:", msh3js.options.enableShadows ? "on" : "off");
       });
 
     // Grid plane visibility toggle.
@@ -1010,41 +1034,19 @@ const msh3js = {
         if (msh3js.debug) console.log("tweakpane::Grid helper set to:", msh3js.three.gridHelper.visible ? "on" : "off");
       });
 
-    // View Helper (axis gizmo) visibility toggle.
-    viewFolder
-      .addBinding(msh3js.options, "enableViewHelper", {
-        label: "Show Axis Helper",
-      })
-      .on("change", async () => {
-        if (msh3js.options.enableViewHelper === true) {
-          if (msh3js.three.viewHelper == null)
-            await msh3js.createViewHelper();
-
-          if (msh3js.three.viewHelper.domElement)
-            msh3js.three.viewHelper.setEnabled(true);
-
-        } else {
-          if (msh3js.three.viewHelper.domElement) {
-            msh3js.three.viewHelper.setEnabled(false);
-          }
-        }
-        if (msh3js.debug) console.log("tweakpane::View helper set to:", msh3js.options.enableViewHelper ? "on" : "off");
-      });
-
     // --- Three Tab ---
     // Three.js parameters
     const graphicsApiFolder = threeTab.addFolder({
       title: "Renderer",
-      expanded: false,
+      expanded: true,
     });
 
     // Build the list of available rendering APIs based on feature detection.
     const apiOptions = {};
     if (msh3js._supportedFeatures.webgl.supported) apiOptions['WebGL'] = 'webgl';
     if (msh3js._supportedFeatures.webgl2.supported) apiOptions['WebGL2'] = 'webgl2';
-    if (msh3js._supportedFeatures.webgpu.supported) apiOptions['WebGPU'] = 'webgpu';
 
-    const apiControl = graphicsApiFolder.addBinding(msh3js.options, 'renderingAPI', {
+    graphicsApiFolder.addBinding(msh3js.options, 'renderingAPI', {
       label: 'Graphics API',
       options: apiOptions,
     }).on('change', async (ev) => {
@@ -1064,7 +1066,6 @@ const msh3js = {
       msh3js.pane.refresh(); // Refresh to show the new default
       await msh3js.recreateRenderer();
     });
-    apiControl.disabled = true; // While testing, disable
 
     const bloomFolder = threeTab.addFolder({
       title: "Bloom",
@@ -1204,9 +1205,10 @@ const msh3js = {
       label: 'Current Animation:',
       options: animOptions,
     }).on('change', (ev) => {
-      // When an animation is selected, just stop any currently playing one. Don't auto-play.
-      msh3js.stopAllAnimations(false);
-      if (msh3js.debug) console.log("tweakpane::Animation selected:", ev.value);
+      // When an animation is selected, play it immediately.
+      if (msh3js.ui.animationPlaying === true)
+        msh3js.playAnimation(ev.value);
+      if (msh3js.debug) console.log("tweakpane::Animation changed to:", ev.value);
     });
     msh3js.ui.animationDropdown = animationDropdown; // Store the reference
 
@@ -1219,8 +1221,14 @@ const msh3js = {
       if (msh3js.debug) console.log("tweakpane::Skeleton visibility set to:", ev.value);
     });
 
+    // Create a proxy object to display the animation status as a string.
+    const statusProxy = {
+      get status() {
+        return msh3js.ui.animationPlaying ? "Playing" : "Stopped";
+      }
+    };
     // Show animation playback status
-    animationsPlaybackFolder.addBinding(msh3js.ui, "animationPlaying", {
+    animationsPlaybackFolder.addBinding(statusProxy, "status", {
       label: "Status",
       readonly: true,
     });
@@ -1289,18 +1297,24 @@ const msh3js = {
       }
     });
 
+    // Generate options for the pixel ratio dropdown.
+    const pixelRatioOptions = [];
+    for (let i = 0.25; i <= 3.0; i += 0.25) {
+      pixelRatioOptions.push({ text: `${i.toFixed(2)}x`, value: i });
+    }
+
     // Pixel Ratio Slider for performance tuning.
     renderingFolder
       .addBinding(msh3js.options, "pixelRatio", {
         label: "Pixel Ratio",
-        min: 0.25,
-        max: 3.0,
-        step: 0.25,
+        options: pixelRatioOptions,
       })
       .on("change", async () => {
         if (msh3js.debug) console.log("tweakpane::Pixel ratio set to:", msh3js.options.pixelRatio);
         msh3js.three.renderer.setPixelRatio(msh3js.options.pixelRatio);
         msh3js.resize();
+        if (msh3js.options.enableViewHelper && msh3js.three.viewHelper)
+          msh3js.three.viewHelper.update();
       });
 
     // GPU Preference Control (high-performance vs low-power).
@@ -1327,6 +1341,106 @@ const msh3js = {
         await msh3js.initStats(msh3js.options.showStats); // Toggle stats
         if (msh3js.debug) console.log("tweakpane::Show stats set to:", msh3js.options.showStats);
       });
+
+    // Controls Folder
+    const controlsFolder = appSettingsTab.addFolder({
+      title: "Controls",
+      expanded: true,
+    });
+
+    // Auto-Rotate toggle for the camera.
+    controlsFolder // Controls for autorotate
+      .addBinding(msh3js.options, "autoRotate", { label: "Auto-Rotate" })
+      .on("change", () => {
+        if (msh3js.three.orbitControls) {
+          msh3js.three.orbitControls.autoRotate = msh3js.options.autoRotate;
+        }
+        if (msh3js.debug) console.log("tweakpane::AutoRotate set to:", msh3js.options.autoRotate ? "on" : "off");
+        // Show/hide speed control
+        if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
+      });
+
+    // Auto-Rotate speed slider.
+    const autoRotateSpeedControl = controlsFolder // Controls for autorotate speed
+      .addBinding(msh3js.options, "autoRotateSpeed", {
+        label: "Auto-Rotate Speed",
+        min: 0.01,
+        max: 20,
+      })
+      .on("change", () => {
+        // Update autorotate speed directly on controls
+        if (msh3js.three.orbitControls) {
+          msh3js.three.orbitControls.autoRotateSpeed = msh3js.options.autoRotateSpeed;
+        }
+        if (msh3js.debug) console.log("tweakpane::AutoRotateSpeed set to:", msh3js.options.autoRotateSpeed);
+      });
+    // Hide initially if autoRotate is off
+    if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
+
+    controlsFolder // Camera controls damping (inertia) toggle.
+      .addBinding(msh3js.options, "controlDamping", {
+        label: "Controls Damping",
+      })
+      .on("change", () => {
+        // Update damping directly on controls
+        if (msh3js.three.orbitControls) {
+          msh3js.three.orbitControls.enableDamping = msh3js.options.controlDamping;
+          msh3js.three.orbitControls.update(); // Apply change immediately if needed
+        }
+        if (msh3js.debug) console.log("tweakpane::Constrols damping set to:", msh3js.options.controlDamping ? "on" : "off");
+      });
+
+    // Axis Helper folder
+    const axisHelperFolder = controlsFolder.addFolder({
+      title: "Axis Helper",
+      expanded: true,
+    });
+
+    // View Helper (axis gizmo) visibility toggle.
+    axisHelperFolder
+      .addBinding(msh3js.options, "enableViewHelper", {
+        label: "Show Axis Helper",
+      })
+      .on("change", async () => {
+        if (msh3js.options.enableViewHelper === true) {
+          if (msh3js.three.viewHelper == null)
+            await msh3js.createViewHelper();
+
+          if (msh3js.three.viewHelper.domElement)
+            msh3js.three.viewHelper.setEnabled(true);
+
+        } else {
+          if (msh3js.three.viewHelper.domElement) {
+            msh3js.three.viewHelper.setEnabled(false);
+          }
+        }
+        if (msh3js.debug) console.log("tweakpane::View helper set to:", msh3js.options.enableViewHelper ? "on" : "off");
+      });
+
+    // Add color controls for X, Y, Z axes
+    axisHelperFolder.addBinding(msh3js.options.viewHelperColors, "x", {
+      label: "X-Axis Color",
+      view: "html-color-picker",
+    }).on("change", async () => {
+      if (msh3js.debug) console.log("tweakpane::X-Axis color changed to:", msh3js.options.viewHelperColors.x);
+      await msh3js.recreateViewHelper();
+    });
+
+    axisHelperFolder.addBinding(msh3js.options.viewHelperColors, "y", {
+      label: "Y-Axis Color",
+      view: "html-color-picker",
+    }).on("change", async () => {
+      if (msh3js.debug) console.log("tweakpane::Y-Axis color changed to:", msh3js.options.viewHelperColors.y);
+      await msh3js.recreateViewHelper();
+    });
+
+    axisHelperFolder.addBinding(msh3js.options.viewHelperColors, "z", {
+      label: "Z-Axis Color",
+      view: "html-color-picker",
+    }).on("change", async () => {
+      if (msh3js.debug) console.log("tweakpane::Z-Axis color changed to:", msh3js.options.viewHelperColors.z);
+      await msh3js.recreateViewHelper();
+    });
 
     // Preferences Folder for saving and clearing settings.
     const preferencesFolder = appSettingsTab.addFolder({
@@ -1526,7 +1640,7 @@ const msh3js = {
     }
 
     // Update stats
-    if (msh3js.options.showStats === true && msh3js.stats != null) 
+    if (msh3js.options.showStats === true && msh3js.stats != null)
       msh3js.stats.update();
 
     // Save rendertime
@@ -1610,505 +1724,82 @@ const msh3js = {
   },
 
   // Process input files for rendering, returns success if msh processed
-  async processFiles(files) {
+  async processFiles() {
     // Start Three
     if (msh3js.three.scene == null) await msh3js.startThree(msh3js.params);
-    // Check for msh files and add them
-    let fileProcessed = false;
-    const mshFilesToProcess = [];
+
     // Only process files that have not been processed yet
     const filesToProcess = Object.values(msh3js._files).filter(f => !f.processed);
-    // Store file count for loading bar
-    const filesCount = filesToProcess.length;
-    msh3js.showLoadingBar(filesCount);
-    for (const fileObj of filesToProcess) {
-      if (fileObj.file.name.toLowerCase().endsWith(".msh")) {
-        // Load msh file with MSHLoader
-        const mshScene = await msh3js.three.mshLoader.loadAsync(fileObj.url);
-        if (msh3js.debug) console.log("processFiles::Loaded msh:", mshScene);
-        // Populate msh data object
-        msh3js.three.msh.push(
-          {
-            fileName: fileObj.file.name,
-            fileSize: fileObj.file.size,
-            lastModified: fileObj.file.lastModified,
-            textures: [],
-            requiredTextures: mshScene.userData.textures,
-            materials: mshScene.userData.materials,
-            models: mshScene.userData.models,
-            sceneInfo: mshScene.userData.sceneInfo,
-            group: mshScene,
-            hasCloth: mshScene.userData.hasCloth,
-            hasSkeleton: mshScene.userData.hasSkeleton,
-            hasShadowVolume: mshScene.userData.hasShadowVolume,
-            hasVertexColors: mshScene.userData.hasVertexColors,
-            animations: mshScene.userData.animations,
-            keyframes: mshScene.userData.keyframes,
-          }
-        );
-        mshFilesToProcess.push(msh3js.three.msh.at(-1));
-        // Add msh to Three scene
-        msh3js.three.scene.add(mshScene);
+    if (filesToProcess.length === 0) return false;
 
-        // After loading, check for hardpoint attachments
-        for (const newMshData of mshFilesToProcess) {
-          const newMshScene = newMshData.group;
-          const hpActive = newMshScene.getObjectByName('hp_active');
+    msh3js.showLoadingBar(filesToProcess.length);
 
-          if (hpActive) {
-            if (msh3js.debug) console.log(`processFiles::Found "hp_active" in ${newMshData.fileName}`);
+    const newMshData = await msh3js.processMshFiles(filesToProcess);
+    const optionsProcessed = await msh3js.processOptionFiles(filesToProcess);
+    const texturesProcessed = await msh3js.processTgaFiles(filesToProcess);
 
-            // Search for 'hp_weapons' in all other loaded meshes
-            let hpWeapons = null;
-            let parentMshGroup = null;
-
-            for (const existingMsh of msh3js.three.msh) {
-              if (existingMsh.group === newMshScene) continue; // Don't check against itself
-
-              const foundHpWeapons = existingMsh.group.getObjectByName('hp_weapons');
-              if (foundHpWeapons) {
-                hpWeapons = foundHpWeapons;
-                parentMshGroup = existingMsh.group;
-                break; // Found it, stop searching
-              }
-            }
-
-            if (hpWeapons) {
-              if (msh3js.debug) console.log(`processFiles::Found "hp_weapons" in ${parentMshGroup.name}. Attaching ${newMshData.fileName}.`);
-
-              // Ensure world matrices are up-to-date before calculations
-              msh3js.three.scene.updateMatrixWorld(true);
-
-              // Detach hp_active from its current parent (the newMshScene group)
-              // to prevent creating a cyclical dependency in the scene graph.
-              if (hpActive.parent) {
-                hpActive.parent.remove(hpActive);
-              }
-
-              // Get the world matrices of the hardpoints
-              const hpWeaponsMatrix = hpWeapons.matrixWorld.clone();
-              const hpActiveMatrix = hpActive.matrixWorld.clone();
-
-              // Calculate the transformation to align hp_active to hp_weapons
-              // M = T_weapon * T_active_inverse
-              const alignMatrix = new THREE.Matrix4().multiplyMatrices(hpWeaponsMatrix, hpActiveMatrix.invert());
-
-              // Apply this alignment to the new mesh's current world matrix
-              newMshScene.matrix.premultiply(alignMatrix);
-              newMshScene.matrix.decompose(newMshScene.position, newMshScene.quaternion, newMshScene.scale);
-              hpWeapons.attach(newMshScene);
-            }
-          }
-        }
-
-        // After adding the scene, traverse it to find a SkinnedMesh and create a SkeletonHelper
-        if (mshFilesToProcess.length > 0) {
-          for (const msh of msh3js.three.msh) {
-            if (msh.hasSkeleton) {
-              if (msh3js.three.skeletonHelper) break; // A helper already exists.
-              msh.group.traverse((child) => {
-                // Create one helper for the first SkinnedMesh found
-                if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
-                  msh3js.three.scene.updateMatrixWorld(true);
-                  const helper = new THREE.SkeletonHelper(child);
-                  helper.name = "skeletonHelper";
-                  helper.visible = msh3js.options.showSkeleton;
-                  msh3js.three.scene.add(helper);
-                  msh3js.three.skeletonHelper = helper;
-                }
-              });
-            }
-          }
-        }
-        fileProcessed = true;
-        fileObj.processed = true; // Mark as processed
-        msh3js.updateLoadingBar();
-      }
-    }
-
-    // After loading MSH files, check for and apply .msh.option files
-    for (const mshData of msh3js.three.msh) {
-      const optionFileName = mshData.fileName.toLowerCase() + ".option";
-      const optionFileObj = msh3js._files[optionFileName];
-
-      if (optionFileObj) {
-        if (msh3js.debug) console.log(`processFiles::Found option file for ${mshData.fileName}`);
-        const optionText = await optionFileObj.file.text();
-        const lines = optionText.split(/\r?\n/);
-
-        for (const line of lines) {
-          const parts = line.trim().split(/\s+/).filter(p => p); // Split by whitespace and remove empty parts
-          for (let i = 0; i < parts.length; i++) {
-            const command = parts[i].toLowerCase();
-
-            if (command === "-bump") {
-              // Process all subsequent parts as texture names until another flag or the end of the line is found.
-              let j = i + 1;
-              while (j < parts.length && !parts[j].startsWith('-')) {
-                const textureName = parts[j].toLowerCase();
-                const bumpTextureName = textureName.replace(/(\.tga)?$/, "_bump.tga");
-                if (msh3js.debug) console.log(`processFiles::-bump rule found. Applying ${bumpTextureName} to materials using ${textureName}.tga`);
-
-                // Find materials using this texture and add the bump map requirement
-                for (const material of mshData.materials) {
-                  if (material.matd?.tx0d?.toLowerCase() === `${textureName}.tga` &&
-                    (!material.matd.atrb.renderFlags.lightMap || !material.matd.atrb.renderFlags.detail)) {
-                    material.matd.tx1d = bumpTextureName; // This will be picked up by the texture loader.
-                    mshData.requiredTextures.push(bumpTextureName);
-                  }
-                }
-                j++; // Move to the next part
-              }
-              i = j - 1; // Update the outer loop index to continue after the processed textures.
-            }
-          }
-        }
-        msh3js.updateLoadingBar();
-        optionFileObj.processed = true; // Mark as processed
-        fileProcessed = true;
-      }
-    }
-
-    // Check for textures and assign them to Three materials if required
-    // Iterate over all files for texture assignment, as textures might be needed by newly added models
-    for (const fileObj of Object.values(msh3js._files)) {
-      if (fileObj.file.name.toLowerCase().endsWith(".tga")) {
-        // Check if the texture is required by any of the loaded MSH files.
-        let required = false;
-        for (const msh of msh3js.three.msh) {
-          if (msh.requiredTextures.includes(fileObj.file.name.toLowerCase()) || msh.requiredTextures.includes(fileObj.file.name.toLowerCase().replace(/_bump\.tga$/, '.tga'))) {
-            required = true;
-            break; // Found a requirement, no need to check other MSH files.
-          }
-        }
-        if (required) {
-          // If the texture has already been processed, skip reloading it.
-          if (fileObj.processed) continue;
-
-          // Load tga file with TGALoader
-          console.log("msh3js::processFiles::Loading texture:", fileObj.file.name);
-          let material = null; // Hoist material to be accessible in catch block
-          try {
-            const ThreeTexture = await msh3js.three.tgaLoader.loadAsync(fileObj.url);
-            ThreeTexture.name = fileObj.file.name;
-            ThreeTexture.colorSpace = THREE.SRGBColorSpace;
-            ThreeTexture.wrapS = THREE.RepeatWrapping;
-            ThreeTexture.wrapT = THREE.RepeatWrapping;
-            ThreeTexture.flipY = true;
-
-            // Assign texture to all materials in all MSH files that require it.
-            for (const msh of msh3js.three.msh) {
-              if (!msh.requiredTextures.includes(fileObj.file.name.toLowerCase())) {
-                // Also check for existingTextureName + _bump.tga for later .option uploading
-                const baseTextureName = fileObj.file.name.toLowerCase().replace(/_bump\.tga$/, '.tga');
-                if (!msh.requiredTextures.includes(baseTextureName)) continue;
-              }
-
-              msh.textures.push(ThreeTexture);
-              for (material of msh.materials) {
-                if (material.texture != undefined) {
-                  // Handle generated cloth material
-                  if (material.texture.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    material.three.map = ThreeTexture;
-                    material.three.wireframe = false;
-                    if (msh3js.debug) console.log("msh3js::processFiles::Cloth texture found for material:", material);
-                    material.three.needsUpdate = true;
-                    msh.textures.push(ThreeTexture);
-                  }
-                }
-                if (material.matd != null) {
-                  // Handle tx0d (diffuse map)
-                  if (material.matd.tx0d && material.matd.tx0d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    // Assign texture as diffuse map
-                    material.three.map = ThreeTexture;
-                    material.three.wireframe = false;
-                    material.three.needsUpdate = true;
-                    msh.textures.push(ThreeTexture);
-
-                    // If the material is specular, extract the alpha channel from the diffuse map.
-                    if (material.specular) {
-                      const { data, width, height } = ThreeTexture.image;
-                      const channels = data.length / (width * height);
-
-                      // Always use RGBAFormat for the DataTexture to ensure consistency.
-                      const alphaData = new Uint8Array(width * height * 4);
-                      const format = THREE.RGBAFormat;
-                      for (let i = 0, j = 0; i < data.length; i += channels, j += 4) {
-                        const alpha = (channels === 4) ? data[i + 3] : 255;
-                        alphaData[j] = alpha;     // R
-                        alphaData[j + 1] = alpha; // G
-                        alphaData[j + 2] = alpha; // B
-                        alphaData[j + 3] = alpha; // A
-                      }
-
-                      // Construct new DataTexture from pulled alpha channel
-                      const alphaTexture = new THREE.DataTexture(alphaData, width, height, format);
-                      alphaTexture.flipY = true;
-                      alphaTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                      alphaTexture.wrapS = THREE.RepeatWrapping;
-                      alphaTexture.wrapT = THREE.RepeatWrapping;
-                      alphaTexture.needsUpdate = true;
-                      material.three.specularMap = alphaTexture;
-                      alphaTexture.name = ThreeTexture.name + "_alpha";
-                      msh.textures.push(alphaTexture);
-                      if (msh3js.debug) console.log('processFiles::RGBA DataTexture constructed for specularMap from alpha channel.');
-
-                    }
-
-                    if (material.glow) {
-                      material.three.emissive = new THREE.Color(0xffffff); // Use white to not tint the map
-                      material.three.emissiveMap = ThreeTexture; // The texture itself provides the glow color
-                    }
-
-                    // If rendertype is ice refraction
-                    if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
-                      // Create CubeCamera on-demand if it doesn't exist
-                      if (!msh3js.three.cubeCamera) {
-                        const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, {
-                          format: THREE.RGBAFormat,
-                          generateMipmaps: true,
-                          minFilter: THREE.LinearMipmapLinearFilter
-                        });
-                        msh3js.three.cubeCamera = new THREE.CubeCamera(1, 1000, cubeRenderTarget);
-                        msh3js.three.cubeCamera.name = "CubeCamera";
-                        if (msh3js.debug) console.log("processFiles::CubeCamera created for refraction.");
-                      }
-                      material.three.envMap = msh3js.three.cubeCamera.renderTarget.texture;
-                      material.three.envMap.mapping = THREE.CubeRefractionMapping;
-                      material.three.refractionRatio = 0.9;
-                      material.three.combine = THREE.MixOperation; // Blend with base color
-                      msh3js.three.dynamic.refractiveMeshes.push(...msh.group.children.filter(child => child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three)));
-                      if (msh3js.debug) console.log('processFiles::Refraction enabled for material:', material.name);
-                    }
-
-                    // If material is flagged as scrolling (DATA0-Horizontal speed, DATA1-Vertical speed, clone texture and have its offset adjusted in renderloop
-                    if (material.scrolling) {
-                      const scrollingTexture = ThreeTexture.clone();
-                      scrollingTexture.wrapS = THREE.RepeatWrapping;
-                      scrollingTexture.wrapT = THREE.RepeatWrapping;
-                      scrollingTexture.userData.isScrolling = true;
-                      // Store scroll speeds in userData. Speeds are often small, so we divide.
-                      scrollingTexture.userData.scrollSpeedU = (material.matd.atrb.data0 || 0) / 255.0;
-                      scrollingTexture.userData.scrollSpeedV = (material.matd.atrb.data1 || 0) / 255.0;
-                      scrollingTexture.userData._scrollTimeU = 0; // Internal timer for U
-                      scrollingTexture.userData._scrollTimeV = 0; // Internal timer for V
-                      material.three.map = scrollingTexture;
-                      scrollingTexture.name = ThreeTexture.name + "_scrolling";
-                      msh.textures.push(scrollingTexture);
-                      if (msh3js.debug) console.log('processFiles::Scrolling RGBA DataTexture created by cloning diffuseMap for material:', material);
-
-                      // If a specular map exists, it should scroll too.
-                      if (material.three.specularMap) {
-                        const scrollingSpecularMap = material.three.specularMap.clone();
-                        scrollingSpecularMap.userData.isScrolling = true;
-                        material.three.specularMap = scrollingSpecularMap;
-                        scrollingSpecularMap.name = material.three.specularMap.name + "_scrolling";
-                        material.three.needsUpdate = true;
-                        msh.textures.push(scrollingSpecularMap);
-                      }
-
-                      // If glowScroll
-                      if (material.matd.atrb.renderFlags.glowScroll) {
-                        material.three.emissive = new THREE.Color(0xffffff);
-                        material.three.emissiveMap = scrollingTexture;
-                        material.three.needsUpdate = true;
-                      }
-                    }
-
-                    // If material is flagged as animated
-                    if (material.matd.atrb.renderFlags.animated) {
-                      const totalFrames = material.matd.atrb.data0 || 4; // Default to 4 frames if not specified
-                      const fps = material.matd.atrb.data1 || 10; // Default to 10 fps
-
-                      // The number of frames must be a perfect square.
-                      const gridSize = Math.sqrt(totalFrames);
-                      if (Math.floor(gridSize) !== gridSize)
-                        console.warn(`Animated texture for material "${material.name}" has ${totalFrames} frames, which is not a perfect square. Animation may not work correctly.`);
-
-                      const animatedTexture = ThreeTexture.clone();
-                      animatedTexture.wrapS = THREE.RepeatWrapping;
-                      animatedTexture.wrapT = THREE.RepeatWrapping;
-                      // Store animation data for the render loop
-                      animatedTexture.userData.isAnimated = true;
-                      animatedTexture.userData.gridSize = gridSize;
-                      animatedTexture.userData.totalFrames = totalFrames;
-                      animatedTexture.userData.fps = fps;
-                      animatedTexture.userData._animationTime = 0; // Add a personal timer
-                      material.three.map = animatedTexture;
-                      animatedTexture.name = ThreeTexture.name + "_animated";
-                      msh.textures.push(animatedTexture);
-
-                      // If a specular map exists, it should animate too.
-                      if (material.three.specularMap) {
-                        const animatedSpecularMap = material.three.specularMap.clone();
-                        animatedSpecularMap.userData.isAnimated = true;
-                        material.three.specularMap = animatedSpecularMap;
-                        msh.textures.push(animatedSpecularMap);
-                      }
-                      if (msh3js.debug) console.log('processFiles::Animated RGBA DataTexture created by cloning diffuseMap for material:', material);
-                    }
-
-                    // If material rendertype is energy/pulsate (DATA0- Minimum Brightness, DATA1- Blink Speed)
-                    if (material.pulsate) {
-                      const pulseSpeed = material.matd.atrb.data1 || 0;
-                      if (pulseSpeed === 0) {
-                        // A speed of 0 means it's always on at max brightness
-                        material.three.userData.alwaysOn = true;
-                        if (msh3js.debug) console.log('processFiles::Pulsating material Always On- Data1=0:', material.name);
-                      } else {
-                        // Store pulsation parameters in userData for the render loop.
-                        material.three.userData.minBrightness = (material.matd.atrb.data0 || 0) / 255.0;
-                        material.three.userData.pulseSpeed = pulseSpeed;
-                        if (msh3js.debug) console.log('processFiles::Pulsating material configured:', material.name);
-                      }
-                    }
-                  }
-
-                  // Handle tx1d (bump/normal/detail maps)
-                  if (material.matd.tx1d && material.matd.tx1d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    if (material.matd.atrb && (material.matd.atrb.renderFlags.lightMap || material.matd.atrb.renderFlags.detail)) {
-                      if (msh3js.debug) console.log('msh3js::processFiles::Detail/Lightmap texture found for material:', material.name);
-                      const detailTexture = ThreeTexture.clone();
-                      detailTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                      detailTexture.wrapS = THREE.RepeatWrapping;
-                      detailTexture.wrapT = THREE.RepeatWrapping;
-                      // Use data0 and data1 for tiling/scaling
-                      if (material.matd.atrb) {
-                        const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
-                        const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
-                        detailTexture.repeat.set(scaleU, scaleV);
-                      }
-                      material.three.lightMap = detailTexture;
-                      material.three.lightMapIntensity = 2.0; // Boost intensity to make it more visible
-                      material.three.needsUpdate = true;
-                      msh.textures.push(detailTexture);
-                    }
-                    else if (material.matd.atrb) {
-                      if (msh3js.debug) {
-                        if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice)
-                          console.log('msh3js::processFiles::Bumpmap for refraction found for material:', material.name);
-                        else console.log('msh3js::processFiles::Bumpmap/Normalmap texture found for material:', material.name);
-                      }
-
-                      // If refracted, always treat TX1D as a bump map for distortion.
-                      if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
-                        ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                        material.three.bumpMap = ThreeTexture;
-                        material.three.bumpScale = 0.05; // A smaller value provides more subtle distortion.
-                      } else {
-                        // Check if the texture is grayscale to determine if it's a bump map.
-                        if (msh3js.isTextureGrayscale(ThreeTexture)) {
-                          if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as bump map (grayscale).');
-                          ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                          material.three.bumpMap = ThreeTexture;
-                          material.three.bumpScale = 0.1; // Default bump scale
-                        } else { // Otherwise, treat it as a normal map.
-                          if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as normal map (color).');
-                          ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                          material.three.normalMap = ThreeTexture;
-                        }
-                      }
-                      material.three.needsUpdate = true;
-                      msh.textures.push(ThreeTexture);
-                    }
-                  }
-
-                  // Handle tx2d (detail map, treated as a lightmap)
-                  if (material.matd.tx2d && material.matd.tx2d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    // For most render types, tx2d is a detail map (which we treat as a lightMap).
-                    // The 'detail' and 'lightMap' render types are exceptions that use tx1d.
-                    if (material.matd.atrb && (!material.matd.atrb.renderFlags.detail && !material.matd.atrb.renderFlags.lightMap)) {
-                      if (msh3js.debug) console.log('msh3js::processFiles::Detail map (from TX2D) found for material:', material.name);
-                      const detailTexture = ThreeTexture.clone();
-                      detailTexture.colorSpace = THREE.SRGBColorSpace;
-                      detailTexture.wrapS = THREE.RepeatWrapping;
-                      detailTexture.wrapT = THREE.RepeatWrapping;
-                      // Use data0 and data1 for tiling/scaling if available
-                      if (material.matd.atrb) {
-                        const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
-                        const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
-                        detailTexture.repeat.set(scaleU, scaleV);
-                      }
-                      material.three.lightMap = detailTexture;
-                      material.three.lightMapIntensity = 2.0; // Boost intensity to make it more visible
-                      material.three.needsUpdate = true;
-                      msh.textures.push(detailTexture);
-                    }
-                    else {
-                      // Treat as bumpMap/normalMap
-                      // Check if the texture is grayscale to determine if it's a bump map.
-                      if (msh3js.isTextureGrayscale(ThreeTexture)) {
-                        if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as bump map (grayscale).');
-                        ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                        material.three.bumpMap = ThreeTexture;
-                        material.three.bumpScale = 0.1; // Default bump scale
-                      } else { // Otherwise, treat it as a normal map.
-                        if (msh3js.debug) console.log('msh3js::processFiles::Texture detected as normal map (color).');
-                        ThreeTexture.colorSpace = THREE.LinearSRGBColorSpace;
-                        material.three.normalMap = ThreeTexture;
-                      }
-                    }
-                  }
-
-                  // Handle tx3d (always cubemap/envmap)
-                  if (material.matd.tx3d && material.matd.tx3d.toLowerCase() === fileObj.file.name.toLowerCase()) {
-                    if (msh3js.debug) console.log('msh3js::processFiles::Cubemap texture found for material:', material);
-                    // The main cubemap for reflections
-                    const cubeTexture = msh3js.convertCrossToCube(ThreeTexture);
-                    material.three.envMap = cubeTexture;
-                    material.three.needsUpdate = true;
-                    msh.textures.push(ThreeTexture); // Keep original for reference
-                    cubeTexture.name = ThreeTexture.name + "_cubeTexture";
-                    msh.textures.push(cubeTexture);
-                  }
-                }
-              }
-            }
-            fileObj.processed = true; // Mark as processed
-            fileProcessed = true;
-            msh3js.updateLoadingBar();
-          } catch (error) {
-            console.error("msh3js::processFiles::Error loading texture:", fileObj.file.name, "For material:", material, error);
-          }
-
-        } else if (msh3js.three.msh.length > 0) {
-          // If MSH files have been loaded and this texture is not required by any of them, discard it.
-          if (msh3js.debug) console.log(`processFiles::Discarding unrequired texture: ${fileObj.file.name}`);
-          delete msh3js._files[fileObj.file.name.toLowerCase()];
-        }
-      }
-    }
-
-    // Clear previous UI data before populating with new data
-    msh3js.ui.models = [];
-    msh3js.ui.materials = [];
-
-    // Populate msh3js.ui elements w/msh data
-    // Also clear and repopulate dynamic material lists for the render loop
-    msh3js.three.dynamic.scrollingMaterials = [];
-    msh3js.three.dynamic.animatedMaterials = [];
-    msh3js.three.dynamic.pulsatingMaterials = [];
-    msh3js.three.dynamic.refractiveMeshes = [];
-    msh3js.three.dynamic.clothMeshes = [];
-
-    for (const msh of msh3js.three.msh) {
+    // Process only the newly loaded MSH data to append to UI and dynamic lists
+    for (const msh of newMshData) {
+      // Add new materials, avoiding duplicates
       for (const material of msh.materials) {
-        msh3js.ui.materials.push(material);
+        if (!msh3js.ui.materials.find(m => m.name === material.name)) {
+          msh3js.ui.materials.push(material);
+        }
       }
-      msh.group.traverse((childObj) => { if (childObj.isMesh) msh3js.ui.models.push(childObj); });
+      const shadowCasterClones = []; // Store clones to be added after traversal
+      // Add new models (meshes), cloth meshes, and collision objects, avoiding duplicates
+      msh.group.traverse((childObj) => {
+        if (childObj.isMesh) {
+          // If the mesh is a shadow volume, clone it and add it to its parent.
+          if ((childObj.userData.isShadowVolume || childObj.userData.shouldBeShadowCaster)) {
+            const shadowClone = childObj.clone();
+            shadowClone.name = `${childObj.name}_ShadowCaster`;
+            shadowClone.castShadow = true;
+            shadowClone.visible = true; // Original sv is hidden by default
+            // The clone's material only writes to the depth buffer for shadow casting.
+            shadowClone.material = new THREE.MeshDepthMaterial({
+              transparent: true,
+              opacity: 0,
+              depthWrite: false,
+              depthTest: true,
+            });
+            shadowCasterClones.push({ clone: shadowClone, parent: childObj.parent });
+            if (msh3js.debug) console.log(`processFiles::Cloned shadow volume: ${childObj.name} for shadow casting.`);
+          }
+
+          if (childObj.userData.isCloth) {
+            // The full cloth sim object will be created and pushed in initClothSimulations
+          } else if (childObj.name.toLowerCase().startsWith("c_") && !msh3js.three.dynamic.collisionObjects.find(c => c.uuid === childObj.uuid)) {
+            msh3js.three.dynamic.collisionObjects.push(childObj);
+          }
+        }
+      });
+
+      // Add the shadow caster clones to the scene after the traversal is complete
+      // This prevents them from being visited by the traverse() call and added to the UI.
+      for (const { clone, parent } of shadowCasterClones) {
+        parent.add(clone);
+      }
     }
-    msh3js.ui.mshName = msh3js.three.msh.at(-1).fileName;
 
     // Populate dynamic material lists for render loop optimization
-    for (const material of msh3js.ui.materials) {
-      if (material.scrolling) msh3js.three.dynamic.scrollingMaterials.push(material);
-      if (material.three.map?.userData.isAnimated) msh3js.three.dynamic.animatedMaterials.push(material);
-      if (material.pulsate) msh3js.three.dynamic.pulsatingMaterials.push(material);
+    for (const material of msh3js.ui.materials) { // Iterate over all materials
+      if (material.scrolling && !msh3js.three.dynamic.scrollingMaterials.includes(material)) {
+        msh3js.three.dynamic.scrollingMaterials.push(material);
+      }
+      if (material.three.map?.userData.isAnimated && !msh3js.three.dynamic.animatedMaterials.includes(material)) {
+        msh3js.three.dynamic.animatedMaterials.push(material);
+      }
+      if (material.pulsate && !msh3js.three.dynamic.pulsatingMaterials.includes(material)) {
+        msh3js.three.dynamic.pulsatingMaterials.push(material);
+      }
       if (material.matd?.atrb?.renderFlags?.refracted) {
         for (const msh of msh3js.three.msh) {
           msh.group.traverse((child) => {
             if (child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three)) {
-              msh3js.three.dynamic.refractiveMeshes.push(child);
+              if (!msh3js.three.dynamic.refractiveMeshes.includes(child)) {
+                msh3js.three.dynamic.refractiveMeshes.push(child);
+              }
             }
           });
         }
@@ -2116,9 +1807,7 @@ const msh3js = {
     }
     if (msh3js.debug) console.log("processFiles::Dynamic material lists populated:", msh3js.three.dynamic);
 
-    msh3js.ui.mshSize = msh3js.three.msh.at(-1).fileSize;
-    msh3js.ui.mshLastModified = new Date(msh3js.three.msh.at(-1).lastModified).toLocaleString();
-    msh3js.ui.sceneName = msh3js.three.msh.at(-1).sceneInfo.name;
+    const fileProcessed = newMshData.length > 0 || optionsProcessed || texturesProcessed;
 
     // Re-calculate the list of all missing textures from scratch
     const missingTextureNames = new Set();
@@ -2132,11 +1821,13 @@ const msh3js = {
     }
     msh3js.ui.missingTextures = Array.from(missingTextureNames);
 
-    // If the loaded model has cloth, enable the simulation by default
-    if (msh3js.three.msh.at(-1).hasCloth) {
+    // If any of the newly loaded models have cloth, enable the simulation by default
+    const anyNewCloth = newMshData.some(msh => msh.hasCloth);
+    if (anyNewCloth) {
       msh3js.options.clothSim = true;
       if (msh3js.pane) msh3js.pane.refresh(); // Update the UI checkbox
       await msh3js.initClothSimulations(); // Start the simulation immediately
+      if (msh3js.debug) console.log("processFiles::Cloth detected in new files, initializing simulation.");
     }
 
     // Rebuild Tweakpane pane if already present for msh tab
@@ -2192,20 +1883,528 @@ const msh3js = {
     return fileProcessed;
   },
 
-  // Process MSH
-  async processMSH() {
+  /**
+   * Processes all .msh files from a list of file objects.
+   * @param {Array<Object>} filesToProcess - An array of file objects to process.
+   * @returns {Promise<Array<Object>>} A promise that resolves with an array of the newly loaded MSH data objects.
+   */
+  async processMshFiles(filesToProcess) {
+    const mshFilesToProcess = [];
+    for (const fileObj of filesToProcess) {
+      if (!fileObj.file.name.toLowerCase().endsWith(".msh")) continue;
 
+      const mshScene = await msh3js.three.mshLoader.loadAsync(fileObj.url);
+      if (msh3js.debug) console.log("processMshFiles::Loaded msh:", mshScene);
+
+      const newMshData = {
+        fileName: fileObj.file.name,
+        fileSize: fileObj.file.size,
+        lastModified: fileObj.file.lastModified,
+        textures: [],
+        requiredTextures: mshScene.userData.textures,
+        materials: mshScene.userData.materials,
+        models: mshScene.userData.models,
+        sceneInfo: mshScene.userData.sceneInfo,
+        group: mshScene,
+        hasCloth: mshScene.userData.hasCloth,
+        hasSkeleton: mshScene.userData.hasSkeleton,
+        hasVertexColors: mshScene.userData.hasVertexColors,
+        animations: mshScene.userData.animations,
+        keyframes: mshScene.userData.keyframes,
+      };
+
+      msh3js.three.msh.push(newMshData);
+      mshFilesToProcess.push(newMshData);
+      msh3js.three.scene.add(mshScene);
+
+      fileObj.processed = true;
+      msh3js.updateLoadingBar();
+    }
+
+    // After all MSH files are loaded, handle hardpoint attachments and skeleton helpers.
+    if (mshFilesToProcess.length > 0) {
+      msh3js.handleHardpointAttachments(mshFilesToProcess);
+      msh3js.createSkeletonHelper();
+    }
+
+    return mshFilesToProcess;
   },
 
-  // Process texture and apply to material(s)
-  async processTGA() {
+  /**
+   * Processes all .msh.option files for a given list of MSH data objects.
+   * @param {Array<Object>} mshDataArray - An array of MSH data objects to check for associated option files.
+   * @returns {Promise<boolean>} A promise that resolves to true if any option file was processed.
+   */
+  async processOptionFiles(filesToProcess) {
+    let anyFileProcessed = false;
+    const optionFiles = filesToProcess.filter(f => f.file.name.toLowerCase().endsWith(".msh.option"));
 
+    for (const optionFileObj of optionFiles) {
+      if (optionFileObj.processed) continue;
+
+      const optionFileName = optionFileObj.file.name.toLowerCase();
+      const targetMshName = optionFileName.replace(/\.option$/, '');
+
+      // Find the corresponding loaded MSH data
+      const mshData = msh3js.three.msh.find(m => m.fileName.toLowerCase() === targetMshName);
+
+      if (mshData) {
+        if (msh3js.debug) console.log(`processOptionFiles::Found option file for already loaded MSH: ${mshData.fileName}`);
+        const optionText = await optionFileObj.file.text();
+        const lines = optionText.split(/\r?\n/);
+
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/).filter(p => p);
+          for (let i = 0; i < parts.length; i++) {
+            const command = parts[i].toLowerCase();
+
+            if (command === "-bump") {
+              let j = i + 1;
+              while (j < parts.length && !parts[j].startsWith('-')) {
+                const textureName = parts[j].toLowerCase();
+                const bumpTextureName = textureName.replace(/(\.tga)?$/, "_bump.tga");
+                if (msh3js.debug) console.log(`processOptionFiles::-bump rule found. Applying ${bumpTextureName} to materials using ${textureName}.tga`);
+
+                for (const material of mshData.materials) {
+                  if (material.matd?.tx0d?.toLowerCase() === `${textureName}.tga` &&
+                    (!material.matd.atrb.renderFlags.lightMap || !material.matd.atrb.renderFlags.detail)) {
+                    material.matd.tx1d = bumpTextureName;
+                    mshData.requiredTextures.push(bumpTextureName);
+
+                    // If the bump texture is already loaded, apply it immediately.
+                    const existingTexture = mshData.textures.find(t => t.name.toLowerCase() === bumpTextureName);
+                    if (existingTexture) {
+                      if (msh3js.debug) console.log(`processOptionFiles::Re-applying existing texture ${bumpTextureName} as bump map.`);
+                      msh3js.applyTextureToMaterial(existingTexture, material, mshData);
+                    }
+                  }
+                }
+                j++;
+              }
+              i = j - 1;
+            } else if (command === "-hiresshadow") {
+              const lodValue = (i + 1 < parts.length && !isNaN(parseInt(parts[i + 1]))) ? parseInt(parts[i + 1]) : 0;
+              if (msh3js.debug) console.log(`processOptionFiles::-hiresshadow rule found with LOD value: ${lodValue}`);
+
+              mshData.group.traverse((child) => {
+                if (child.isMesh && !child.userData.isCloth && !child.name.toLowerCase().startsWith("c_") &&
+                  !child.name.toLowerCase().startsWith("p_") && !child.name.toLowerCase().includes("collision") &&
+                  !child.name.toLowerCase().endsWith("_lod2") && !child.name.toLowerCase().endsWith("_lod3") &&
+                  !child.name.toLowerCase().includes("lowres") && !child.name.toLowerCase().includes("lowrez") && 
+                  !child.name.toLowerCase().includes("shadowvolume") && !child.name.toLowerCase().startsWith("sv_")) {
+                  let shadowMesh = null;
+                  const baseName = child.name.replace(/_lod[23]|_lowres|_lowrez/i, '');
+                  const lod2 = mshData.group.getObjectByName(`${baseName}_lod2`);
+                  const lod3 = mshData.group.getObjectByName(`${baseName}_lod3`);
+                  const low = mshData.group.getObjectByName(`${baseName}_lowres`) || mshData.group.getObjectByName(`${baseName}_lowrez`);
+
+                  if (lodValue === 0) {
+                    shadowMesh = child;
+                  } else if (lodValue === 1) {
+                    shadowMesh = lod2 ?? lod3 ?? low;
+                  } else if (lodValue === 2) {
+                    shadowMesh = lod3 ?? low;
+                  } else if (lodValue === 3) {
+                    shadowMesh = low;
+                  }
+
+                  if (shadowMesh) {
+                    shadowMesh.userData.shouldBeShadowCaster = true;
+                    if (msh3js.debug) console.log(`processOptionFiles::Flagging "${shadowMesh.name}" to be a shadow caster for "${child.name}".`);
+                  } else {
+                    child.userData.shouldBeShadowCaster = true;
+                    if (msh3js.debug) console.log(`processOptionFiles::Flagging "${child.name}" to be a shadow caster".`);
+                  }
+                }
+              });
+
+              // If a value was provided, skip the next part of the line
+              if (lodValue > 0 || (i + 1 < parts.length && !isNaN(parseInt(parts[i + 1])))) {
+                i++;
+              }
+            } else if (command === "-hardskinonly") {
+              if (msh3js.debug) console.log(`processOptionFiles::-hardskinonly rule found for ${mshData.fileName}.`);
+
+              mshData.group.traverse((child) => {
+                if (child.isSkinnedMesh) {
+                  if (msh3js.debug) console.log(`processOptionFiles::Applying hard skinning to "${child.name}".`);
+                  const geometry = child.geometry;
+                  const skinWeight = geometry.getAttribute('skinWeight');
+                  const vertexCount = skinWeight.count;
+
+                  for (let i = 0; i < vertexCount; i++) {
+                    const weights = [
+                      skinWeight.getX(i),
+                      skinWeight.getY(i),
+                      skinWeight.getZ(i),
+                      skinWeight.getW(i)
+                    ];
+
+                    let maxWeight = 0;
+                    let maxIndex = -1;
+
+                    for (let j = 0; j < 4; j++) {
+                      if (weights[j] > maxWeight) {
+                        maxWeight = weights[j];
+                        maxIndex = j;
+                      }
+                    }
+
+                    if (maxIndex !== -1) {
+                      skinWeight.setX(i, maxIndex === 0 ? 1.0 : 0.0);
+                      skinWeight.setY(i, maxIndex === 1 ? 1.0 : 0.0);
+                      skinWeight.setZ(i, maxIndex === 2 ? 1.0 : 0.0);
+                      skinWeight.setW(i, maxIndex === 3 ? 1.0 : 0.0);
+                    }
+                  }
+                  skinWeight.needsUpdate = true;
+                }
+              });
+            }
+          }
+        }
+        optionFileObj.processed = true;
+        msh3js.updateLoadingBar();
+        anyFileProcessed = true;
+      }
+    }
+    return anyFileProcessed;
   },
 
-  // Mutate material properties depending on rendertype
-  processMaterial() {
-    // Only directly mutate material properties if NOT using webGPU.
-    // Otherwise, clone, mutate, reassign, dispose of old.
+  /**
+   * Processes all .tga files from a list of file objects, applying them to materials.
+   * @param {Array<Object>} filesToProcess - An array of file objects to process.
+   * @returns {Promise<boolean>} A promise that resolves to true if any texture file was processed.
+   */
+  async processTgaFiles(filesToProcess) {
+    let anyFileProcessed = false;
+    for (const fileObj of filesToProcess) {
+      if (!fileObj.file.name.toLowerCase().endsWith(".tga")) continue;
+
+      let isRequired = false;
+      for (const msh of msh3js.three.msh) {
+        const requiredLower = msh.requiredTextures.map(t => t.toLowerCase());
+        const fileNameLower = fileObj.file.name.toLowerCase();
+        if (requiredLower.includes(fileNameLower) || requiredLower.includes(fileNameLower.replace(/_bump\.tga$/, '.tga'))) {
+          isRequired = true;
+          break;
+        }
+      }
+
+      if (isRequired) {
+        if (fileObj.processed) continue;
+
+        console.log("processTgaFiles::Loading texture:", fileObj.file.name);
+        try {
+          const threeTexture = await msh3js.three.tgaLoader.loadAsync(fileObj.url);
+          threeTexture.name = fileObj.file.name;
+          threeTexture.colorSpace = THREE.SRGBColorSpace;
+          threeTexture.wrapS = THREE.RepeatWrapping;
+          threeTexture.wrapT = THREE.RepeatWrapping;
+          threeTexture.flipY = true;
+
+          for (const msh of msh3js.three.msh) {
+            const requiredLower = msh.requiredTextures.map(t => t.toLowerCase());
+            const fileNameLower = fileObj.file.name.toLowerCase();
+            const baseTextureName = fileNameLower.replace(/_bump\.tga$/, '.tga');
+
+            if (requiredLower.includes(fileNameLower) || requiredLower.includes(baseTextureName)) {
+              msh.textures.push(threeTexture);
+              for (const material of msh.materials) {
+                msh3js.applyTextureToMaterial(threeTexture, material, msh);
+              }
+            }
+          }
+
+          fileObj.processed = true;
+          anyFileProcessed = true;
+          msh3js.updateLoadingBar();
+        } catch (error) {
+          console.error("processTgaFiles::Error loading texture:", fileObj.file.name, error);
+        }
+      } else if (msh3js.three.msh.length > 0) {
+        if (msh3js.debug) console.log(`processTgaFiles::Discarding unrequired texture: ${fileObj.file.name}`);
+        delete msh3js._files[fileObj.file.name.toLowerCase()];
+      }
+    }
+    return anyFileProcessed;
+  },
+
+  /**
+   * Applies a loaded texture to a single material based on its properties and texture slots.
+   * @param {THREE.Texture} threeTexture - The texture to apply.
+   * @param {Object} material - The material data object from the MSH loader.
+   * @param {Object} msh - The MSH data object the material belongs to.
+   */
+  applyTextureToMaterial(threeTexture, material, msh) {
+    const fileNameLower = threeTexture.name.toLowerCase();
+
+    // Handle generated cloth material
+    if (material.texture?.toLowerCase() === fileNameLower) {
+      material.three.map = threeTexture;
+      material.three.wireframe = false;
+      if (msh3js.debug) console.log("applyTextureToMaterial::Cloth texture found for material:", material.name);
+      material.three.needsUpdate = true;
+    }
+
+    if (!material.matd) return;
+
+    // Handle tx0d (diffuse map)
+    if (material.matd.tx0d?.toLowerCase() === fileNameLower) {
+      msh3js.processMaterial(threeTexture, material, 'diffuse', msh);
+    }
+
+    // Handle tx1d (bump/normal/detail maps)
+    if (material.matd.tx1d?.toLowerCase() === fileNameLower) {
+      if (material.matd.atrb && (material.matd.atrb.renderFlags.lightMap || material.matd.atrb.renderFlags.detail)) {
+        msh3js.processMaterial(threeTexture, material, 'lightmap', msh);
+      } else if (material.matd.atrb) {
+        msh3js.processMaterial(threeTexture, material, 'normal', msh);
+      }
+    }
+
+    // Handle tx2d (detail map, treated as a lightmap)
+    if (material.matd.tx2d?.toLowerCase() === fileNameLower) {
+      if (material.matd.atrb && (!material.matd.atrb.renderFlags.detail && !material.matd.atrb.renderFlags.lightMap)) {
+        msh3js.processMaterial(threeTexture, material, 'lightmap', msh);
+      } else {
+        msh3js.processMaterial(threeTexture, material, 'normal', msh);
+      }
+    }
+
+    // Handle tx3d (always cubemap/envmap)
+    if (material.matd.tx3d?.toLowerCase() === fileNameLower) {
+      msh3js.processMaterial(threeTexture, material, 'cubemap', msh);
+    }
+  },
+
+  /**
+   * Mutates material properties based on a loaded texture and its intended use.
+   * @param {THREE.Texture} threeTexture - The texture being applied.
+   * @param {Object} material - The material data object.
+   * @param {string} type - The type of map being applied ('diffuse', 'normal', 'lightmap', 'cubemap').
+   * @param {Object} msh - The parent MSH data object.
+   */
+  processMaterial(threeTexture, material, type, msh) {
+    material.three.needsUpdate = true;
+
+    switch (type) {
+      case 'diffuse':
+        material.three.map = threeTexture;
+        material.three.wireframe = false;
+
+        if (material.specular) {
+          const { data, width, height } = threeTexture.image;
+          const channels = data.length / (width * height);
+          const alphaData = new Uint8Array(width * height * 4);
+          for (let i = 0, j = 0; i < data.length; i += channels, j += 4) {
+            const alpha = (channels === 4) ? data[i + 3] : 255;
+            alphaData[j] = alpha; alphaData[j + 1] = alpha; alphaData[j + 2] = alpha; alphaData[j + 3] = alpha;
+          }
+          const alphaTexture = new THREE.DataTexture(alphaData, width, height, THREE.RGBAFormat);
+          alphaTexture.flipY = true;
+          alphaTexture.colorSpace = THREE.LinearSRGBColorSpace;
+          alphaTexture.wrapS = THREE.RepeatWrapping;
+          alphaTexture.wrapT = THREE.RepeatWrapping;
+          alphaTexture.needsUpdate = true;
+          material.three.specularMap = alphaTexture;
+          alphaTexture.name = threeTexture.name + "_alpha";
+          msh.textures.push(alphaTexture);
+          if (msh3js.debug) console.log('processMaterial::RGBA DataTexture constructed for specularMap from alpha channel.');
+        }
+
+        if (material.glow) {
+          material.three.emissive = new THREE.Color(0xffffff);
+          material.three.emissiveMap = threeTexture;
+          // TODO: Enable bloom if bitFlags or renderFlags = glow
+        }
+
+        if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
+          if (!msh3js.three.cubeCamera) {
+            const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, { format: THREE.RGBAFormat, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+            msh3js.three.cubeCamera = new THREE.CubeCamera(1, 1000, cubeRenderTarget);
+            msh3js.three.cubeCamera.name = "CubeCamera";
+            if (msh3js.debug) console.log("processMaterial::CubeCamera created for refraction.");
+          }
+          material.three.envMap = msh3js.three.cubeCamera.renderTarget.texture;
+          material.three.envMap.mapping = THREE.CubeRefractionMapping;
+          material.three.refractionRatio = 0.9;
+          material.three.combine = THREE.MixOperation;
+          msh3js.three.dynamic.refractiveMeshes.push(...msh.group.children.filter(child => child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three)));
+          if (msh3js.debug) console.log('processMaterial::Refraction enabled for material:', material.name);
+        }
+
+        if (material.scrolling) {
+          const scrollingTexture = threeTexture.clone();
+          scrollingTexture.wrapS = THREE.RepeatWrapping;
+          scrollingTexture.wrapT = THREE.RepeatWrapping;
+          scrollingTexture.userData.isScrolling = true;
+          scrollingTexture.userData.scrollSpeedU = (material.matd.atrb.data0 || 0) / 255.0;
+          scrollingTexture.userData.scrollSpeedV = (material.matd.atrb.data1 || 0) / 255.0;
+          scrollingTexture.userData._scrollTimeU = 0;
+          scrollingTexture.userData._scrollTimeV = 0;
+          material.three.map = scrollingTexture;
+          scrollingTexture.name = threeTexture.name + "_scrolling";
+          msh.textures.push(scrollingTexture);
+          if (msh3js.debug) console.log('processMaterial::Scrolling texture created for material:', material.name);
+
+          if (material.three.specularMap) {
+            const scrollingSpecularMap = material.three.specularMap.clone();
+            scrollingSpecularMap.userData.isScrolling = true;
+            material.three.specularMap = scrollingSpecularMap;
+            scrollingSpecularMap.name = material.three.specularMap.name + "_scrolling";
+            msh.textures.push(scrollingSpecularMap);
+          }
+
+          if (material.matd.atrb.renderFlags.glowScroll) {
+            material.three.emissive = new THREE.Color(0xffffff);
+            material.three.emissiveMap = scrollingTexture;
+          }
+        }
+
+        if (material.matd.atrb.renderFlags.animated) {
+          const totalFrames = material.matd.atrb.data0 || 4;
+          const fps = material.matd.atrb.data1 || 10;
+          const gridSize = Math.sqrt(totalFrames);
+          if (Math.floor(gridSize) !== gridSize) console.warn(`Animated texture for material "${material.name}" has ${totalFrames} frames, which is not a perfect square.`);
+
+          const animatedTexture = threeTexture.clone();
+          animatedTexture.wrapS = THREE.RepeatWrapping;
+          animatedTexture.wrapT = THREE.RepeatWrapping;
+          animatedTexture.userData.isAnimated = true;
+          animatedTexture.userData.gridSize = gridSize;
+          animatedTexture.userData.totalFrames = totalFrames;
+          animatedTexture.userData.fps = fps;
+          animatedTexture.userData._animationTime = 0;
+          material.three.map = animatedTexture;
+          animatedTexture.name = threeTexture.name + "_animated";
+          msh.textures.push(animatedTexture);
+
+          if (material.three.specularMap) {
+            const animatedSpecularMap = material.three.specularMap.clone();
+            animatedSpecularMap.userData.isAnimated = true;
+            material.three.specularMap = animatedSpecularMap;
+            msh.textures.push(animatedSpecularMap);
+          }
+          if (msh3js.debug) console.log('processMaterial::Animated texture created for material:', material.name);
+        }
+
+        if (material.pulsate) {
+          const pulseSpeed = material.matd.atrb.data1 || 0;
+          if (pulseSpeed === 0) {
+            material.three.userData.alwaysOn = true;
+            if (msh3js.debug) console.log('processMaterial::Pulsating material Always On:', material.name);
+          } else {
+            material.three.userData.minBrightness = (material.matd.atrb.data0 || 0) / 255.0;
+            material.three.userData.pulseSpeed = pulseSpeed;
+            if (msh3js.debug) console.log('processMaterial::Pulsating material configured:', material.name);
+          }
+        }
+        break;
+
+      case 'normal':
+        if (msh3js.debug) console.log('processMaterial::Bumpmap/Normalmap texture found for material:', material.name);
+        if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
+          threeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+          material.three.bumpMap = threeTexture;
+          material.three.bumpScale = 0.05;
+        } else {
+          if (msh3js.isTextureGrayscale(threeTexture)) {
+            if (msh3js.debug) console.log('processMaterial::Texture detected as bump map (grayscale).');
+            threeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+            material.three.bumpMap = threeTexture;
+            material.three.bumpScale = 0.1;
+          } else {
+            if (msh3js.debug) console.log('processMaterial::Texture detected as normal map (color).');
+            threeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+            material.three.normalMap = threeTexture;
+          }
+        }
+        msh.textures.push(threeTexture);
+        break;
+
+      case 'lightmap':
+        if (msh3js.debug) console.log('processMaterial::Detail/Lightmap texture found for material:', material.name);
+        const detailTexture = threeTexture.clone();
+        detailTexture.colorSpace = THREE.LinearSRGBColorSpace;
+        detailTexture.wrapS = THREE.RepeatWrapping;
+        detailTexture.wrapT = THREE.RepeatWrapping;
+        if (material.matd.atrb) {
+          const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
+          const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
+          detailTexture.repeat.set(scaleU, scaleV);
+        }
+        material.three.lightMap = detailTexture;
+        material.three.lightMapIntensity = 2.0;
+        msh.textures.push(detailTexture);
+        break;
+
+      case 'cubemap':
+        if (msh3js.debug) console.log('processMaterial::Cubemap texture found for material:', material.name);
+        const cubeTexture = msh3js.convertCrossToCube(threeTexture);
+        material.three.envMap = cubeTexture;
+        msh.textures.push(threeTexture); // Keep original for reference
+        cubeTexture.name = threeTexture.name + "_cubeTexture";
+        msh.textures.push(cubeTexture);
+        break;
+    }
+  },
+
+  handleHardpointAttachments(mshFilesToProcess) {
+    for (const newMshData of mshFilesToProcess) {
+      const newMshScene = newMshData.group;
+      const hpActive = newMshScene.getObjectByName('hp_active');
+
+      if (hpActive) {
+        if (msh3js.debug) console.log(`handleHardpointAttachments::Found "hp_active" in ${newMshData.fileName}`);
+        let hpWeapons = null;
+        let parentMshGroup = null;
+
+        for (const existingMsh of msh3js.three.msh) {
+          if (existingMsh.group === newMshScene) continue;
+          const foundHpWeapons = existingMsh.group.getObjectByName('hp_weapons');
+          if (foundHpWeapons) {
+            hpWeapons = foundHpWeapons;
+            parentMshGroup = existingMsh.group;
+            break;
+          }
+        }
+
+        if (hpWeapons) {
+          if (msh3js.debug) console.log(`handleHardpointAttachments::Found "hp_weapons" in ${parentMshGroup.name}. Attaching ${newMshData.fileName}.`);
+          msh3js.three.scene.updateMatrixWorld(true);
+          if (hpActive.parent) hpActive.parent.remove(hpActive);
+
+          const hpWeaponsMatrix = hpWeapons.matrixWorld.clone();
+          const hpActiveMatrix = hpActive.matrixWorld.clone();
+          const alignMatrix = new THREE.Matrix4().multiplyMatrices(hpWeaponsMatrix, hpActiveMatrix.invert());
+
+          newMshScene.matrix.premultiply(alignMatrix);
+          newMshScene.matrix.decompose(newMshScene.position, newMshScene.quaternion, newMshScene.scale);
+          hpWeapons.attach(newMshScene);
+        }
+      }
+    }
+  },
+
+  createSkeletonHelper() {
+    if (msh3js.three.skeletonHelper) return; // A helper already exists.
+
+    for (const msh of msh3js.three.msh) {
+      if (msh.hasSkeleton) {
+        msh.group.traverse((child) => {
+          if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
+            msh3js.three.scene.updateMatrixWorld(true);
+            const helper = new THREE.SkeletonHelper(child);
+            helper.name = "skeletonHelper";
+            helper.visible = msh3js.options.showSkeleton;
+            msh3js.three.scene.add(helper);
+            msh3js.three.skeletonHelper = helper;
+          }
+        });
+        if (msh3js.three.skeletonHelper) break; // Stop after creating one.
+      }
+    }
   },
 
   // Create renderer using passed params and return it along with its context and canvas
@@ -2259,38 +2458,30 @@ const msh3js = {
       console.log("createRenderer::Requested API:", params.renderingAPI, "\nRenderer Params:", params);
 
     try {
-      if (params.renderingAPI === 'webgpu' && msh3js._supportedFeatures.webgpu.supported) {
-        // WebGPU Renderer
-        rendererParams.antialias = params.AA; // WebGPURenderer uses a boolean for antialias
-        newRenderer = new WebGPURenderer(rendererParams);
-        await newRenderer.init();
-        newContext = newRenderer.getContext(); // The context is available after init
-        // For WebGPURenderer, sampleCount is set at initialization. No post-init call is needed.
-      } else {
-        // WebGL/WebGL2 Renderer
-        if (params.renderingAPI === 'webgl2' && !msh3js._supportedFeatures.webgl2.supported) {
-          console.warn("createRenderer::WebGL2 not supported, falling back to WebGL.");
-          params.renderingAPI = 'webgl';
-        }
-        rendererParams.antialias = params.AA;
-        rendererParams.sampleCount = params.sampleCount;
-        rendererParams.reverseDepthBuffer = params.reverseDepth;
-        rendererParams.useLegacyLights = true;
-
-        newRenderer = new THREE.WebGLRenderer(rendererParams);
-        newContext = newRenderer.getContext();
-        newRenderer.debug = {
-          checkShaderErrors: msh3js.debug,
-          onShaderError: null
-        };
+      // WebGL/WebGL2 Renderer
+      if (params.renderingAPI === 'webgl2' && !msh3js._supportedFeatures.webgl2.supported) {
+        console.warn("createRenderer::WebGL2 not supported, falling back to WebGL.");
+        params.renderingAPI = 'webgl';
       }
+      rendererParams.antialias = params.AA;
+      rendererParams.sampleCount = params.sampleCount;
+      rendererParams.reverseDepthBuffer = params.reverseDepth;
+      rendererParams.useLegacyLights = true;
+
+      newRenderer = new THREE.WebGLRenderer(rendererParams);
+      newContext = newRenderer.getContext();
+      newRenderer.debug = {
+        checkShaderErrors: msh3js.debug,
+        onShaderError: null
+      };
+
     } catch (e) {
       console.error(`createRenderer::Error initializing ${params.renderingAPI} renderer:`, e);
       // Fallback logic could be added here if initialization fails
       alert(`Failed to create the ${params.renderingAPI} renderer. Please check console for errors.`);
       return {};
     }
-
+    newRenderer.shadowMap.enabled = msh3js.options.enableShadows;
     newRenderer.setSize(params.size.width, params.size.height, false);
     newRenderer.setPixelRatio(params.pixelRatio);
     newRenderer.setClearColor(0x0000AA);
@@ -2336,8 +2527,7 @@ const msh3js = {
     }
     // Release context
     if (msh3js.context) {
-      if (msh3js.options.renderingAPI !== 'webgpu')
-        msh3js.context.finish();
+      msh3js.context.finish();
       msh3js.context = null;
     }
     if (msh3js.debug) console.log("recreateRenderer::Context released.");
@@ -2371,6 +2561,43 @@ const msh3js = {
 
     if (msh3js.debug)
       console.log("recreateRenderer::Renderer recreated.");
+  },
+
+  // Recreates the ViewHelper with current settings.
+  async recreateViewHelper() {
+    // Dispose of the existing ViewHelper if it exists
+    if (msh3js.three.viewHelper) {
+      msh3js.three.viewHelper.dispose();
+      msh3js.three.viewHelper = null;
+      if (msh3js.debug) console.log("recreateViewHelper::Old ViewHelper disposed.");
+    }
+
+    // Only recreate if it's currently enabled in options
+    if (msh3js.options.enableViewHelper) {
+      // Ensure camera, renderer, and controls are initialized before creating ViewHelper
+      if (!msh3js.three.camera) msh3js.createCamera();
+      if (!msh3js.three.renderer) {
+        const { renderer, context } = await msh3js.createRenderer({
+          renderingAPI: msh3js.options.renderingAPI,
+          size: msh3js.size,
+          pixelRatio: msh3js.options.pixelRatio,
+          GPU: msh3js.options.preferredGPU,
+          AA: msh3js.options.aa,
+          sampleCount: msh3js.options.sampleCount,
+          reverseDepth: msh3js._useReverseDepth,
+          canvas: msh3js.canvas,
+        });
+        msh3js.three.renderer = renderer;
+        msh3js.context = context;
+      }
+      if (!msh3js.three.orbitControls) msh3js.createOrbitControls();
+
+      await msh3js.createViewHelper();
+      msh3js.three.viewHelper.setEnabled(true);
+      if (msh3js.debug) console.log("recreateViewHelper::New ViewHelper created and enabled.");
+    } else {
+      if (msh3js.debug) console.log("recreateViewHelper::ViewHelper not recreated as it is disabled.");
+    }
   },
 
   // Create HTML canvas element for DOM and return it
@@ -2421,30 +2648,6 @@ const msh3js = {
     msh3js.three.dirLight.name = "directionalLight1";
     msh3js.three.dirLight.target.name = "directionalLight1Target";
     msh3js.three.dirLight.castShadow = msh3js.options.enableShadows;
-    if (msh3js.three.dirLight.castShadow === true) {
-      msh3js.three.dirLight.shadow.mapSize.width = 512;
-      msh3js.three.dirLight.shadow.mapSize.height = 512;
-      // Shadow camera bounds based on imported msh bbox
-      if (msh3js.three.msh.length > 0 && msh3js.three.msh[-1].sceneInfo != null) {
-        const radius = msh3js.three.msh[-1].sceneInfo.radius;
-        // Set camera bounds based on radius
-        msh3js.three.dirLight.shadow.camera.near = 0.5;
-        msh3js.three.dirLight.shadow.camera.far = radius * 3.0;
-        msh3js.three.dirLight.shadow.camera.left = -radius * 1.5;
-        msh3js.three.dirLight.shadow.camera.right = radius * 1.5;
-        msh3js.three.dirLight.shadow.camera.top = radius * 1.5;
-        msh3js.three.dirLight.shadow.camera.bottom = -radius * 1.5;
-      } else {
-        msh3js.three.dirLight.shadow.camera.left = -10;
-        msh3js.three.dirLight.shadow.camera.right = 10;
-        msh3js.three.dirLight.shadow.camera.top = 10;
-        msh3js.three.dirLight.shadow.camera.bottom = -10;
-        msh3js.three.dirLight.shadow.camera.near = 0.5;
-        msh3js.three.dirLight.shadow.camera.far = 500;
-      }
-      // Shadow bias
-      msh3js.three.dirLight.shadow.bias = -0.001;
-    }
     msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
     msh3js.three.scene.add(msh3js.three.dirLight);
     msh3js.three.dirLight.target.position.set(0, 0, 0);
@@ -2476,6 +2679,9 @@ const msh3js = {
     msh3js.three.gridHelper.visible = msh3js.options.enableGrid;
     msh3js.three.scene.add(msh3js.three.gridHelper);
 
+    // Set initial shadow camera properties
+    msh3js.frameCamera();
+
     if (msh3js.debug) console.log("createScene::Scene created: ", msh3js.three.scene);
     return msh3js.three.scene;
   },
@@ -2504,15 +2710,27 @@ const msh3js = {
 
     const target = new THREE.Box3();
 
-    // If an object is passed, frame it. Otherwise, frame the entire scene.
+    // If an object is passed, frame it (respecting visibility). Otherwise, frame the entire scene.
     if (obj) {
-      target.setFromObject(obj, true);
+      obj.traverse((child) => {
+        if ((child.isMesh || child.isSkinnedMesh) && child.visible && child.geometry) {
+          if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
+          const childBBox = child.geometry.boundingBox.clone();
+          childBBox.applyMatrix4(child.matrixWorld);
+          target.union(childBBox);
+        }
+      });
     } else if (msh3js.three.msh.length > 0) {
       for (const msh of msh3js.three.msh) {
-        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
-        if (!mshBBox.isEmpty()) {
-          target.union(mshBBox);
-        }
+        msh.group.traverse((child) => {
+          // Only include visible meshes and skinned meshes in the bounding box calculation.
+          if ((child.isMesh || child.isSkinnedMesh) && child.visible && child.geometry) {
+            if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
+            const childBBox = child.geometry.boundingBox.clone();
+            childBBox.applyMatrix4(child.matrixWorld);
+            target.union(childBBox);
+          }
+        });
       }
     }
 
@@ -2534,6 +2752,23 @@ const msh3js = {
         msh3js.three.orbitControls.maxDistance = msh3js.three.camera.far * 0.95;
         msh3js.three.orbitControls.update();
       }
+
+      // Update shadow camera to fit the new scene bounds
+      if (msh3js.three.dirLight.castShadow) {
+        const shadowRadius = radius > 0 ? radius : 10; // Use a fallback for empty scenes
+        const shadowCam = msh3js.three.dirLight.shadow.camera;
+
+        shadowCam.near = 0.1;
+        shadowCam.far = shadowRadius * 4 + distance; // Ensure far plane covers the camera distance
+        shadowCam.left = -shadowRadius * 1.5;
+        shadowCam.right = shadowRadius * 1.5;
+        shadowCam.top = shadowRadius * 1.5;
+        shadowCam.bottom = -shadowRadius * 1.5;
+
+        shadowCam.updateProjectionMatrix();
+        if (msh3js.debug) console.log("frameCamera::Shadow camera updated for new scene bounds.");
+      }
+
       msh3js.three.camera.updateProjectionMatrix();
       return true;
     }
@@ -2619,9 +2854,9 @@ const msh3js = {
 
     msh3js.three.orbitControls = new OrbitControls(camera, canvas);
     msh3js.three.orbitControls.name = "orbitControls";
-    msh3js.three.orbitControls.target.set(0, 1, 0);
-    msh3js.three.orbitControls.minDistance = camera.near * 1.1;
-    msh3js.three.orbitControls.maxDistance = camera.far * 0.9;
+    msh3js.three.orbitControls.target.set(0, 0, 0);
+    msh3js.three.orbitControls.minDistance = camera.near * 1.05;
+    msh3js.three.orbitControls.maxDistance = camera.far * 0.95;
     msh3js.three.orbitControls.listenToKeyEvents(window);
     msh3js.three.orbitControls.keyPanSpeed = 1.5;
     msh3js.three.orbitControls.autoRotate = msh3js.options.autoRotate;
@@ -3054,9 +3289,6 @@ const msh3js = {
   async initClothSimulations() {
     if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
 
-    // Dynamically import MeshBVH if not already loaded
-    // Clear the dynamic list at the start, as this function is the single source of truth for cloth simulations.
-    msh3js.three.dynamic.clothMeshes = [];
     let MeshBVH;
     if (msh3js._modules.MeshBVH) {
       MeshBVH = msh3js._modules.MeshBVH;
@@ -3072,30 +3304,26 @@ const msh3js = {
       }
     }
 
+    // Process all MSH files, but only add new cloth simulations
     for (const msh of msh3js.three.msh) {
-      const collisionObjects = [];
-
-      // First, find all potential collision objects in the current msh group.
-      msh.group.traverse((obj) => {
-        if (obj.isMesh && obj.name.toLowerCase().startsWith("c_")) {
-          collisionObjects.push(obj);
-        }
-      });
-
       // Only search for cloth meshes if the msh is flagged as having cloth.
       if (!msh.hasCloth) continue;
 
       const clothMeshes = [];
       msh.group.traverse((obj) => {
-        if (obj.isMesh && obj.userData.isCloth) clothMeshes.push(obj);
+        // Check if a simulation for this mesh already exists
+        const simExists = msh3js.three.dynamic.clothMeshes.some(sim => sim.mesh.uuid === obj.uuid);
+        if (obj.isMesh && obj.userData.isCloth && !simExists) {
+          clothMeshes.push(obj);
+        }
       });
 
       // Build BVH for all collision objects
-      for (const collisionObj of collisionObjects) {
+      for (const collisionObj of msh3js.three.dynamic.collisionObjects) {
         // The BVH is stored on the geometry for later access
         collisionObj.geometry.boundsTree = new MeshBVH(collisionObj.geometry);
       }
-
+      // Now, create simulations for the newly found cloth meshes
       for (const clothMesh of clothMeshes) {
         const geometry = clothMesh.geometry;
         const positionAttr = geometry.getAttribute('position');
@@ -3238,7 +3466,7 @@ const msh3js = {
           mesh: clothMesh,
           particles: particles,
           constraints: constraints,
-          collisionObjects: collisionObjects,
+          collisionObjects: msh3js.three.dynamic.collisionObjects,
         };
         msh3js.three.dynamic.clothMeshes.push(newClothMesh);
 
@@ -3247,7 +3475,7 @@ const msh3js = {
             particles: particles.length,
             constraints: constraints.length,
             fixedPoints: particles.filter(p => p.fixed).length,
-            collisionObjects: collisionObjects.length,
+            collisionObjects: msh3js.three.dynamic.collisionObjects.length,
           });
         }
       }
@@ -3456,7 +3684,6 @@ const msh3js = {
   async getSupportedGraphicsFeatures(canvases = null) {
     let webglCanvas;
     let webgl2Canvas;
-    let webgpuCanvas;
 
     if (canvases) {
       // Get passed canvases if present
@@ -3470,11 +3697,6 @@ const msh3js = {
         webgl2Canvas = msh3js.createCanvas({
           id: "webgl2Canvas",
         }, false);
-      if (canvases.webgpuCanvas) webgpuCanvas = canvases.webgpuCanvas;
-      else
-        webgpuCanvas = msh3js.createCanvas({
-          id: "webgpuCanvas",
-        }, false);
     } else {
       // Create canvases if none passed
       webglCanvas = msh3js.createCanvas({
@@ -3482,9 +3704,6 @@ const msh3js = {
       }, false);
       webgl2Canvas = msh3js.createCanvas({
         id: "webgl2Canvas",
-      }, false);
-      webgpuCanvas = msh3js.createCanvas({
-        id: "webgpuCanvas",
       }, false);
     }
 
@@ -3579,75 +3798,6 @@ const msh3js = {
           msh3js._supportedFeatures.webgl2.maxSamples,
         );
     }
-
-    try {
-      // Detect WebGPU Support
-      if (navigator.gpu) {
-        const adapter = await navigator.gpu.requestAdapter();
-        if (adapter) {
-          msh3js._supportedFeatures.webgpu.supported = true;
-          msh3js._supportedFeatures.webgpu.reverseDepth = true; // WebGPU supports this natively
-
-          const device = await adapter.requestDevice();
-          if (device) {
-            const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
-            const potentialSampleCounts = [2, 4, 8, 16];
-            let maxSamples = 1;
-            const supportedSampleCounts = [1]; // Start with 1 as a baseline
-
-            // To find the exact supported sample counts, we must try to create a render pipeline
-            // for each count and see if it succeeds.
-            const shaderModule = device.createShaderModule({
-              code: `
-                @vertex fn main_vs() -> @builtin(position) vec4<f32> {
-                  return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-                }
-                @fragment fn main_fs() -> @location(0) vec4<f32> {
-                  return vec4<f32>(1.0, 1.0, 1.0, 1.0);
-                }`
-            });
-
-            for (const count of potentialSampleCounts) {
-              try {
-                await device.createRenderPipelineAsync({
-                  vertex: { module: shaderModule, entryPoint: 'main_vs' },
-                  fragment: { module: shaderModule, entryPoint: 'main_fs', targets: [{ format: preferredFormat }] },
-                  primitive: { topology: 'triangle-list' },
-                  multisample: { count },
-                  layout: 'auto'
-                });
-                // If it succeeds, the count is supported
-                maxSamples = Math.max(maxSamples, count);
-                supportedSampleCounts.push(count);
-              } catch (e) {
-                // This sample count is not supported, just continue to the next one.
-                if (msh3js.debug) console.warn(`WebGPU MSAA check: Sample count ${count} is not supported.`);
-              }
-            }
-            msh3js._supportedFeatures.webgpu.aa = maxSamples > 1;
-            msh3js._supportedFeatures.webgpu.maxSamples = maxSamples;
-            msh3js._supportedFeatures.webgpu.supportedSampleCounts = supportedSampleCounts; // Store all supported counts
-
-            // Populate sampleCountOptions for WebGPU
-            msh3js._supportedFeatures.webgpu.sampleCountOptions = [{ text: 'Off', value: 0 }];
-            if (msh3js._supportedFeatures.webgpu.aa) {
-              // Filter out 1 and add the rest
-              supportedSampleCounts.filter(c => c > 1).forEach(count => {
-                msh3js._supportedFeatures.webgpu.sampleCountOptions.push({ text: `${count}x`, value: count });
-              });
-            }
-            device.destroy();
-          }
-        }
-      }
-    } catch (e) {
-      if (msh3js.debug)
-        console.error("getSupportedGraphicsFeatures::WebGPU error: ", e);
-    } finally {
-      if (msh3js.debug)
-        console.log("getSupportedGraphicsFeatures::WebGPU support:", msh3js._supportedFeatures.webgpu.supported, "\nWebGPU AA support:", msh3js._supportedFeatures.webgpu.aa, "\nWebGPU max AA samples:", msh3js._supportedFeatures.webgpu.maxSamples, "\nWebGPU Reverse depth buffer support:", msh3js._supportedFeatures.webgpu.reverseDepth);
-    }
-
   },
 
   // Get persistent storage support
@@ -3822,57 +3972,57 @@ const msh3js = {
       }
     } else if (group === "dragMove") {
       if (action === "add") {
-        if (!this._listeners.dragMove) {
-          const moveHandler = this._draggableDragMove.bind(this, element);
-          const endHandler = this._draggableDragEnd.bind(this, element);
+        if (!msh3js._listeners.dragMove) {
+          const moveHandler = msh3js._draggableDragMove.bind(this, element);
+          const endHandler = msh3js._draggableDragEnd.bind(this, element);
           document.addEventListener('mousemove', moveHandler);
           document.addEventListener('mouseup', endHandler);
           document.addEventListener('touchmove', moveHandler, { passive: false });
           document.addEventListener('touchend', endHandler);
-          this._listeners.dragMove = { moveHandler, endHandler };
+          msh3js._listeners.dragMove = { moveHandler, endHandler };
         }
       } else if (action === "remove") {
-        if (this._listeners.dragMove) {
-          document.removeEventListener('mousemove', this._listeners.dragMove.moveHandler);
-          document.removeEventListener('mouseup', this._listeners.dragMove.endHandler);
-          document.removeEventListener('touchmove', this._listeners.dragMove.moveHandler);
-          document.removeEventListener('touchend', this._listeners.dragMove.endHandler);
-          this._listeners.dragMove = null;
+        if (msh3js._listeners.dragMove) {
+          document.removeEventListener('mousemove', msh3js._listeners.dragMove.moveHandler);
+          document.removeEventListener('mouseup', msh3js._listeners.dragMove.endHandler);
+          document.removeEventListener('touchmove', msh3js._listeners.dragMove.moveHandler);
+          document.removeEventListener('touchend', msh3js._listeners.dragMove.endHandler);
+          msh3js._listeners.dragMove = null;
         }
       }
     } else if (group === "resizeMove") {
       if (action === "add") {
-        if (!this._listeners.resizeMove) {
-          const moveHandler = this._resizableMouseMove.bind(this, element);
-          const upHandler = this._resizableMouseUp.bind(this, element);
+        if (!msh3js._listeners.resizeMove) {
+          const moveHandler = msh3js._resizableMouseMove.bind(this, element);
+          const upHandler = msh3js._resizableMouseUp.bind(this, element);
           document.addEventListener('mousemove', moveHandler);
           document.addEventListener('mouseup', upHandler);
-          this._listeners.resizeMove = { moveHandler, upHandler };
+          msh3js._listeners.resizeMove = { moveHandler, upHandler };
         }
       } else if (action === "remove") {
-        if (this._listeners.resizeMove) {
-          document.removeEventListener('mousemove', this._listeners.resizeMove.moveHandler);
-          document.removeEventListener('mouseup', this._listeners.resizeMove.upHandler);
-          this._listeners.resizeMove = null;
+        if (msh3js._listeners.resizeMove) {
+          document.removeEventListener('mousemove', msh3js._listeners.resizeMove.moveHandler);
+          document.removeEventListener('mouseup', msh3js._listeners.resizeMove.upHandler);
+          msh3js._listeners.resizeMove = null;
         }
       }
     } else if (group === "dragClickCapture") {
       if (action === "add") {
-        if (!this._listeners.dragClickCapture) {
+        if (!msh3js._listeners.dragClickCapture) {
           const handler = (ev) => {
-            if (this._draggableStates.get(element)?.hasDragged) {
+            if (msh3js._draggableStates.get(element)?.hasDragged) {
               ev.stopPropagation();
             }
             // Self-removing listener
-            this.manageListeners('remove', 'dragClickCapture', element);
+            msh3js.manageListeners('remove', 'dragClickCapture', element);
           };
           element.addEventListener('click', handler, { capture: true });
-          this._listeners.dragClickCapture = handler;
+          msh3js._listeners.dragClickCapture = handler;
         }
       } else if (action === "remove") {
-        if (this._listeners.dragClickCapture) {
-          element.removeEventListener('click', this._listeners.dragClickCapture, { capture: true });
-          this._listeners.dragClickCapture = null;
+        if (msh3js._listeners.dragClickCapture) {
+          element.removeEventListener('click', msh3js._listeners.dragClickCapture, { capture: true });
+          msh3js._listeners.dragClickCapture = null;
         }
       }
     } else { console.warn("manageListeners::Unknown group:", group); }
@@ -3993,15 +4143,15 @@ const msh3js = {
       offsetY: point.clientY - element.getBoundingClientRect().top,
       dragThreshold: 5
     };
-    this._draggableStates.set(element, state);
+    msh3js._draggableStates.set(element, state);
 
-    this.manageListeners('add', 'dragMove', element);
-    this.manageListeners('add', 'dragClickCapture', element);
+    msh3js.manageListeners('add', 'dragMove', element);
+    msh3js.manageListeners('add', 'dragClickCapture', element);
     target.style.cursor = 'grabbing';
   },
 
   _draggableDragMove(element, e) {
-    const state = this._draggableStates.get(element);
+    const state = msh3js._draggableStates.get(element);
     if (!state?.isDragging) return;
 
     if (e.touches) e.preventDefault();
@@ -4016,7 +4166,7 @@ const msh3js = {
       }
     }
 
-    const parentRect = this._appContainer.getBoundingClientRect();
+    const parentRect = msh3js._appContainer.getBoundingClientRect();
     const elementRect = element.getBoundingClientRect();
     const newLeft = point.clientX - state.offsetX;
     const newTop = point.clientY - state.offsetY;
@@ -4026,16 +4176,16 @@ const msh3js = {
   },
 
   _draggableDragEnd(element) {
-    const state = this._draggableStates.get(element);
+    const state = msh3js._draggableStates.get(element);
     if (state) state.isDragging = false;
 
-    this.manageListeners('remove', 'dragMove', element);
+    msh3js.manageListeners('remove', 'dragMove', element);
     document.body.style.cursor = '';
   },
 
   // --- Resizable Handlers ---
   _resizableMouseMoveCursor(element, e) {
-    const state = this._resizableStates.get(element);
+    const state = msh3js._resizableStates.get(element);
     if (state?.isResizing) return;
 
     const rect = element.getBoundingClientRect();
@@ -4056,16 +4206,16 @@ const msh3js = {
       startWidth: element.offsetWidth,
       minWidth: 240,
     };
-    this._resizableStates.set(element, state);
+    msh3js._resizableStates.set(element, state);
 
     e.preventDefault();
     e.stopPropagation();
 
-    this.manageListeners('add', 'resizeMove', element);
+    msh3js.manageListeners('add', 'resizeMove', element);
   },
 
   _resizableMouseMove(element, e) {
-    const state = this._resizableStates.get(element);
+    const state = msh3js._resizableStates.get(element);
     if (!state?.isResizing) return;
 
     const dx = e.clientX - state.startX;
@@ -4075,10 +4225,10 @@ const msh3js = {
   },
 
   _resizableMouseUp(element) {
-    const state = this._resizableStates.get(element);
+    const state = msh3js._resizableStates.get(element);
     if (state) state.isResizing = false;
 
-    this.manageListeners('remove', 'resizeMove', element);
+    msh3js.manageListeners('remove', 'resizeMove', element);
   },
 };
 

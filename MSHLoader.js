@@ -109,6 +109,20 @@ export class MSHLoader extends THREE.Loader {
     }
 
     /**
+     * Configures and returns a THREE.FileLoader instance for loading the
+     * binary data from a URL.
+     */
+    _setupLoader(manager) {
+        manager = manager !== undefined ? manager : THREE.DefaultLoadingManager;
+        const loader = new THREE.FileLoader(manager);
+        loader.setPath(this.path)
+            .setWithCredentials(this.withCredentials)
+            .setRequestHeader(this.requestHeader)
+            .setResponseType("arraybuffer");
+        return loader;
+    }
+
+    /**
      * The main parsing function. It takes the raw file data (ArrayBuffer)
      * and orchestrates the process of reading chunks, creating THREE.js objects,
      * and assembling the final scene.
@@ -116,8 +130,8 @@ export class MSHLoader extends THREE.Loader {
      * @returns {THREE.Group} The fully constructed scene as a THREE.Group.
      */
     parse(arrayBuffer, url) {
+        // Initialize loader state for the new file.
         try {
-            // Reset and initialize properties for the new file.
             this.buffer = new DataView(arrayBuffer);
             this.byteOffset = 0;
             this.models = [];
@@ -125,10 +139,9 @@ export class MSHLoader extends THREE.Loader {
             this.textures = new Set();
             this.animations = [];
             this.keyframes = [];
-            // Log errors with initializing properties.
         } catch (error) { console.error("parse::Error initializing MSHLoader:", error); }
 
-        // This THREE.Group will be the root object for the loaded model.
+        // This group will be the root object for the loaded model.
         const scene = new THREE.Group();
 
         // Read the main data chunks from the file buffer.
@@ -140,25 +153,10 @@ export class MSHLoader extends THREE.Loader {
             this.animations = animData.animations;
             this.keyframes = animData.keyframes;
         }
-        // Store all unique texture names referenced.
         this.textures = Array.from(this.textures);
-        // Store set of bone names
-        let boneNames = new Set();
 
-        // Prioritize finding bones from skinning data (ENVL chunks) as it's the most reliable source.
-        for (const model of this.models) {
-            const modelNameLower = model.name.toLowerCase();
-            // Treat any model starting with "bone", "root", or "eff" as part of the skeleton.
-            if (modelNameLower.startsWith("bone") || modelNameLower.startsWith("root") || modelNameLower.startsWith("eff")) {
-                boneNames.add(model.name.toLowerCase());
-                continue;
-            }
-            const boneMndxArray = model.modl.geom?.envelope?.indices;
-            if (boneMndxArray) {
-                const boneModels = this.models.filter(m => boneMndxArray.includes(m.modl.mndx));
-                boneModels.forEach(m => boneNames.add(m.name));
-            }
-        }
+        // Identify all bones in the model hierarchy.
+        const boneNames = this._identifyBoneNames();
 
         // Log all parsed data for debugging purposes.
         if (this.debug) {
@@ -172,9 +170,59 @@ export class MSHLoader extends THREE.Loader {
             console.log("parse::Bones:", boneNames);
         }
 
-        // --- Step 1: Construct THREE Materials ---
-        // Iterate through the raw material data and create THREE.MeshPhongMaterial objects
-        // inside of this.materials[x].three.
+        // --- Main Parsing Steps ---
+
+        // 1. Construct THREE.js materials from the parsed material data.
+        this._constructThreeMaterials();
+
+        // 2. Construct THREE.js objects (Meshes, Bones, etc.) and map them.
+        const modelsMap = this._constructSceneObjects(boneNames);
+
+        // 3. Assemble the scene hierarchy by parenting the created objects.
+        this._assembleSceneHierarchy(scene, modelsMap);
+
+        // 4. If there are bones, create the skeleton and bind it to skinned meshes.
+        this._createAndBindSkeleton(scene, modelsMap);
+
+        // 5. Create THREE.js AnimationClips from the parsed animation data.
+        const animationClips = this._createAnimationClips(scene);
+
+        // 6. Populate the scene's userData with the parsed data for external use.
+        this._populateUserData(scene, animationClips);
+
+        if (this.debug) console.log("parse::Scene userData objects assigned, scene ready:", scene);
+        return scene;
+    }
+
+    /**
+     * Identifies all bone names from the model list based on naming conventions
+     * and skinning information.
+     * @returns {Set<string>} A set of lowercase bone names.
+     */
+    _identifyBoneNames() {
+        const boneNames = new Set();
+        // Find bone names
+        for (const model of this.models) {
+            const modelNameLower = model.name.toLowerCase();
+            // Treat any model starting with "bone", "root", or "eff" as part of the skeleton.
+            if (modelNameLower.startsWith("bone") || modelNameLower.startsWith("root") || modelNameLower.startsWith("eff")) {
+                boneNames.add(model.name.toLowerCase());
+                continue;
+            }
+            const boneMndxArray = model.modl.geom?.envelope?.indices;
+            if (boneMndxArray) {
+                const boneModels = this.models.filter(m => boneMndxArray.includes(m.modl.mndx));
+                boneModels.forEach(m => boneNames.add(m.name));
+            }
+        }
+        return boneNames;
+    }
+
+    /**
+     * Iterates through the raw material data and creates THREE.MeshPhongMaterial
+     * objects, storing them back into the `this.materials` array.
+     */
+    _constructThreeMaterials() {
         for (let material of this.materials) {
             let transparent = false, specular = false, specColor = null, diffColor = null;
             if (material.matd.atrb != null) {
@@ -221,19 +269,23 @@ export class MSHLoader extends THREE.Loader {
             material.three = threeMaterial;
         }
         if (this.debug) console.log("parse::THREE Materials constructed:", this.materials);
+    }
 
-        // --- Step 2: Construct THREE Meshes, Bones, and other Objects ---
-        // This map will help us quickly find parent models by name when building the hierarchy.
+    /**
+     * Constructs all THREE.js scene objects (Meshes, Bones, Object3Ds) from the
+     * parsed model data.
+     * @param {Set<string>} boneNames - A set of names for objects that should be bones.
+     * @returns {Map<string, object>} A map from lowercase model names to the model data object.
+     */
+    _constructSceneObjects(boneNames) {
         const modelsMap = new Map();
-        const allBones = []; // Array to hold all THREE.Bone objects.
-        // Iterate through all the raw model data.
+
         for (let model of this.models) {
             // If this model's name was found in boneNames, create as a bone.
             if (boneNames.has(model.name.toLowerCase())) {
                 const bone = new THREE.Bone();
                 bone.name = model.name;
                 model.three = bone;
-                allBones.push(bone);
                 // Apply the initial (bind pose) transformation from the file.
                 bone.position.set(model.modl.tran.translation[0], model.modl.tran.translation[1], model.modl.tran.translation[2]);
                 bone.quaternion.set(model.modl.tran.rotation[0], model.modl.tran.rotation[1], model.modl.tran.rotation[2], model.modl.tran.rotation[3]);
@@ -253,9 +305,9 @@ export class MSHLoader extends THREE.Loader {
             }
 
             // Infer visibility based on Pandemic Studios' naming conventions.
-            if (model.name.toLowerCase().startsWith("sv_") || model.name.toLowerCase().startsWith("p_") || model.name.toLowerCase().startsWith("c_") ||
-                model.name.toLowerCase().includes("shadowvolume") || model.name.toLowerCase().includes("collision") || model.name.toLowerCase().includes("lowrez") ||
-                model.name.toLowerCase().includes("lowres") || model.name.toLowerCase().endsWith("_lod2") || model.name.toLowerCase().endsWith("_lod3"))
+            if (model.name.toLowerCase().startsWith("p_") || model.name.toLowerCase().startsWith("c_") || model.name.toLowerCase().includes("collision") ||
+                model.name.toLowerCase().includes("lowrez") || model.name.toLowerCase().includes("lowres") || model.name.toLowerCase().endsWith("_lod2") || 
+                model.name.toLowerCase().endsWith("_lod3") || model.name.toLowerCase().startsWith("sv_") || model.name.toLowerCase().includes("shadowvolume"))
                 model.modl.flgs = 1;
             // Otherwise override flgs and assign it the visible value (0).
             else
@@ -266,26 +318,65 @@ export class MSHLoader extends THREE.Loader {
                 let mesh = null;
                 // Create buffer geometry from SEGM chunks
                 if (model.modl.geom.segments.length > 0) {
-                    // We will merge all geometry segments from this model into a single BufferGeometry.
-                    const mergedPositions = []; // All vertex positions for this model.
-                    const mergedNormals = [];   // All vertex normals.
-                    const mergedUVs = [];       // All UVs.
-                    const mergedColors = [];    // All vertex colors.
-                    const mergedTris = [];      // All triangles.
+                    // Pre-calculate total sizes for typed arrays
+                    let totalVertexCount = 0;
+                    let totalIndexCount = 0;
+                    let hasNormals = false;
+                    let hasUVs = false;
+                    let hasColors = false;
+
+                    for (const segment of model.modl.geom.segments) {
+                        totalVertexCount += segment.posl.vertexCount;
+                        if (segment.nrml.normals) hasNormals = true;
+                        if (segment.uv0l.uvs) hasUVs = true;
+                        if (segment.clrl.colors || segment.clrb.color) hasColors = true;
+
+                        let segmentIndexCount = 0;
+                        if (segment.ndxt.trianglesCCW) {
+                            segmentIndexCount += segment.ndxt.trianglesCCW.length;
+                        }
+                        if (segment.strp.triangleStrips) {
+                            for (const strip of segment.strp.triangleStrips) {
+                                if (strip.length >= 3) {
+                                    segmentIndexCount += (strip.length - 2) * 3;
+                                }
+                            }
+                        }
+                        if (segment.ndxl.polygons) {
+                            for (const polygon of segment.ndxl.polygons) {
+                                if (polygon.length >= 3) {
+                                    segmentIndexCount += (polygon.length - 2) * 3;
+                                }
+                            }
+                        }
+                        totalIndexCount += segmentIndexCount;
+                    }
+
+                    // Initialize typed arrays. We will merge all geometry segments from this model into a single BufferGeometry.
+                    const mergedPositions = new Float32Array(totalVertexCount * 3);
+                    const mergedNormals = hasNormals ? new Float32Array(totalVertexCount * 3) : null;
+                    const mergedUVs = hasUVs ? new Float32Array(totalVertexCount * 2) : null;
+                    const mergedColors = hasColors ? new Float32Array(totalVertexCount * 4) : null;
+                    const mergedTris = new Uint16Array(totalIndexCount);
+
                     const geometryGroups = [];  // All geometry-material pairs.
                     let vertexOffset = 0;       // Running total of vertices.
                     let indexOffset = 0;        // Running total of indices.
+                    let positionOffset = 0;
+                    let normalOffset = 0;
+                    let uvOffset = 0;
+                    let colorOffset = 0;
 
                     // Loop through segments appending attributes to merged lists.
                     for (let segment of model.modl.geom.segments) {
                         if (segment.posl.vertices) // If geometry segment has vertices add them.
-                            mergedPositions.push(...segment.posl.vertices);
+                            mergedPositions.set(segment.posl.vertices, positionOffset);
 
                         if (segment.nrml.normals) // If geometry segment has normals add them.
-                            mergedNormals.push(...segment.nrml.normals);
+                            mergedNormals.set(segment.nrml.normals, normalOffset);
 
                         if (segment.uv0l.uvs) // If geometry segment has UVs add them.
-                            mergedUVs.push(...segment.uv0l.uvs);
+                            mergedUVs.set(segment.uv0l.uvs, uvOffset);
 
                         // Handle per-vertex colors (CLRL chunk) if present.
                         if (segment.clrl.colors) { // Flag assigned material for vertex colors present.
@@ -300,7 +391,7 @@ export class MSHLoader extends THREE.Loader {
                                 rgba[i + 3] = bgra[i + 3] / 255.0; // A
                             }
                             // Add this segment's vertex colors.
-                            mergedColors.push(...rgba);
+                            mergedColors.set(rgba, colorOffset);
                             // Handle single color for the whole segment (CLRB chunk) if present.
                         } else if (segment.clrb.color) {
                             // Colors are stored as BGRA (0-255), so convert to RGBA (0.0-1.0) for THREE.
@@ -317,67 +408,62 @@ export class MSHLoader extends THREE.Loader {
                                     rgba[i * 4 + 3] = bgra[3] / 255.0; // A
                                 }
                                 // Add this segment's expanded vertex color.
-                                mergedColors.push(...rgba);
+                                mergedColors.set(rgba, colorOffset);
                             }
                         }
-                        // Process indices from NDXT chunks which contain triangles (CCW winding).
-                        let trianglesCCW = [];
+                        
+                        // Keep track of how many indices this segment adds.
+                        const startIndexCount = indexOffset;
+
+                        // Process indices from NDXT (triangles), STRP (strips), and NDXL (quads/polygons).
+                        // Write them directly into the final mergedTris buffer.
                         if (segment.ndxt.trianglesCCW) {
-                            // If NDXT chunk present, add each triangle for this segment to the geometry's total list.
-                            for (let i = 0; i <= segment.ndxt.trianglesCCW.length - 3; i += 3)
-                                trianglesCCW.push(segment.ndxt.trianglesCCW[i], segment.ndxt.trianglesCCW[i + 1], segment.ndxt.trianglesCCW[i + 2]);
+                            for (const index of segment.ndxt.trianglesCCW) {
+                                mergedTris[indexOffset++] = index + vertexOffset;
+                            }
                         }
-                        // STRP chunks contain triangle strips, which need to be unrolled into a list of triangles.
                         if (segment.strp.triangleStrips) {
-                            // Unroll triangle strips into a single list of triangles (CCW winding) if STRP chunk is present.
-                            segment.strp.trianglesCCW = [];
                             for (const strip of segment.strp.triangleStrips) {
-                                let indices = Array.from(strip);
-                                if (indices.length < 3) continue; // Less than three indices indicates the end of a single strip.
-                                // Add CCW triangles to this segment's list.
-                                for (let i = 0; i <= indices.length - 3; i++) {
-                                    if (i % 2 === 0) { // Triangle strips alternate winding between clockwise and counter-clockwise.
-                                        segment.strp.trianglesCCW.push(indices[i], indices[i + 1], indices[i + 2]);
+                                if (strip.length < 3) continue;
+                                for (let i = 0; i <= strip.length - 3; i++) {
+                                    if (i % 2 === 0) {
+                                        mergedTris[indexOffset++] = strip[i] + vertexOffset;
+                                        mergedTris[indexOffset++] = strip[i + 1] + vertexOffset;
+                                        mergedTris[indexOffset++] = strip[i + 2] + vertexOffset;
                                     } else {
-                                        segment.strp.trianglesCCW.push(indices[i], indices[i + 2], indices[i + 1]);
+                                        mergedTris[indexOffset++] = strip[i] + vertexOffset;
+                                        mergedTris[indexOffset++] = strip[i + 2] + vertexOffset;
+                                        mergedTris[indexOffset++] = strip[i + 1] + vertexOffset;
                                     }
                                 }
                             }
-                            // Add this segment's list of CCW triangles to this geometry's total list.
-                            for (let i = 0; i <= segment.strp.trianglesCCW.length - 3; i += 3)
-                                trianglesCCW.push(segment.strp.trianglesCCW[i], segment.strp.trianglesCCW[i + 1], segment.strp.trianglesCCW[i + 2]);
                         }
-                        // NDXL chunks contain polygon indices (quads), which need to be triangulated for THREE.
                         if (segment.ndxl.polygons) {
-                            // A simple fan triangulation algorithm for convex polygons.
-                            segment.ndxl.trianglesCCW = [];
                             for (const polygon of segment.ndxl.polygons) {
-                                if (polygon.length < 3) continue; // Polygon must have at least three points.
-                                const v0 = polygon[0]; // Starting vertex.
-                                // Add three points of the polygon to this segment's triangle list.
-                                for (let i = 1; i < polygon.length - 1; i++)
-                                    segment.ndxl.trianglesCCW.push(v0, polygon[i], polygon[i + 1]);
+                                if (polygon.length < 3) continue;
+                                const v0 = polygon[0] + vertexOffset;
+                                for (let i = 1; i < polygon.length - 1; i++) {
+                                    mergedTris[indexOffset++] = v0;
+                                    mergedTris[indexOffset++] = polygon[i] + vertexOffset;
+                                    mergedTris[indexOffset++] = polygon[i + 1] + vertexOffset;
+                                }
                             }
-                            // Add this segment's list of CCW triangles to this geometry's total list.
-                            for (let i = 0; i <= segment.ndxl.trianglesCCW.length - 3; i += 3)
-                                trianglesCCW.push(segment.ndxl.trianglesCCW[i], segment.ndxl.trianglesCCW[i + 1], segment.ndxl.trianglesCCW[i + 2]);
                         }
-                        
-                        // Append the segment's final triangle indices to the merged list, adjusting for the current vertex offset.
-                        if (trianglesCCW.length > 0)
-                            for (let index of trianglesCCW)
-                                mergedTris.push(index + vertexOffset);
+                        const segmentIndexCount = indexOffset - startIndexCount;
 
                         // Record a geometry group for this segment. This tells THREE.js which part of the geometry uses which material.
                         geometryGroups.push({
-                            start: indexOffset,          // Each segment starts at a different position.
-                            count: trianglesCCW.length,  // Length of indices for this segment.
+                            start: startIndexCount,      // Each segment starts at a different position.
+                            count: segmentIndexCount,    // Length of indices for this segment.
                             materialIndex: segment.mati, // Index of material assigned to this segment.
                         });
 
                         // Increment offsets for next segment.
-                        indexOffset += trianglesCCW.length;
                         vertexOffset += segment.posl.vertexCount;
+                        positionOffset += segment.posl.vertices?.length || 0;
+                        normalOffset += segment.nrml.normals?.length || 0;
+                        uvOffset += segment.uv0l.uvs?.length || 0;
+                        colorOffset += (segment.clrl.colors?.length || (segment.clrb.color ? segment.posl.vertexCount * 4 : 0));
                     }
 
                     // Now that all segments are processesd, create the final BufferGeometry for this model.
@@ -385,11 +471,11 @@ export class MSHLoader extends THREE.Loader {
                     // Set the merged attributes from the segments' positions, normals, uvs, colors if present.
                     if (mergedPositions.length > 0)
                         geometry.setAttribute("position", new THREE.Float32BufferAttribute(mergedPositions, 3));
-                    if (mergedNormals.length > 0)
+                    if (mergedNormals)
                         geometry.setAttribute("normal", new THREE.Float32BufferAttribute(mergedNormals, 3));
-                    if (mergedUVs.length > 0)
+                    if (mergedUVs)
                         geometry.setAttribute("uv", new THREE.Float32BufferAttribute(mergedUVs, 2));
-                    if (mergedColors.length > 0)
+                    if (mergedColors)
                         geometry.setAttribute("color", new THREE.Float32BufferAttribute(mergedColors, 4));
                     // Set the final merged triangles index list for this model's geometry.
                     if (mergedTris.length > 0 && mergedPositions.length > 0)
@@ -421,27 +507,30 @@ export class MSHLoader extends THREE.Loader {
                     if (model.modl.geom.envelope && model.modl.geom.envelope.indices) {
                         // The WGHT chunk contains indices that point into the ENVL chunk's list of bone model indices (mndx).
                         // We need to build the final skinIndex and skinWeight attributes by merging all segments.
+                        let totalSkinValues = 0;
+                        for (const segment of model.modl.geom.segments) {
+                            totalSkinValues += segment.posl.vertexCount * 4;
+                        }
+
                         const envlBoneMndx = model.modl.geom.envelope.indices;
-                        const finalSkinIndices = [];
-                        const finalSkinWeights = [];
+                        const finalSkinIndices = new Uint16Array(totalSkinValues);
+                        const finalSkinWeights = new Float32Array(totalSkinValues);
+                        let skinOffset = 0;
 
                         for (const segment of model.modl.geom.segments) {
                             if (segment.wght && segment.wght.indices && segment.wght.weights) {
                                 for (let i = 0; i < segment.wght.indices.length; i++) {
                                     // The index from WGHT points to a bone's mndx in the ENVL array.
                                     const envlIndex = segment.wght.indices[i];
-                                    const boneMndx = envlBoneMndx[envlIndex];
-                                    finalSkinIndices.push(boneMndx);
+                                    finalSkinIndices[skinOffset + i] = envlBoneMndx[envlIndex];
                                 }
-                                finalSkinWeights.push(...segment.wght.weights);
-                            }
-                            else {
+                                finalSkinWeights.set(segment.wght.weights, skinOffset);
+                            } else {
                                 // If a segment in a skinned mesh has no WGHT chunk, we must pad the skinning attributes with zeros
                                 // to prevent buffer length mismatches and NaN errors.
-                                const vertexCount = segment.posl.vertexCount;
-                                finalSkinIndices.push(...new Array(vertexCount * 4).fill(0));
-                                finalSkinWeights.push(...new Array(vertexCount * 4).fill(0));
+                                // The typed arrays are already initialized with zeros, so we just need to advance the offset.
                             }
+                            skinOffset += segment.posl.vertexCount * 4;
                         }
 
                         // Add the skinning attributes required by THREE.SkinnedMesh.
@@ -471,6 +560,14 @@ export class MSHLoader extends THREE.Loader {
 
                         model.three = mesh; // Add THREE Mesh to model.three.
                     }
+
+                    // Set shadow casters and receivers
+                    if (model.name.toLowerCase().includes("shadowvolume") || model.name.toLowerCase().startsWith("sv_")) {
+                        mesh.userData.isShadowVolume = true;
+                        // Assign depth material
+                        mesh.material = new THREE.MeshDepthMaterial();
+                    } else
+                        mesh.receiveShadow = true;
                 }
 
                 // --- Cloth Mesh (from CLTH chunk) ---
@@ -527,9 +624,15 @@ export class MSHLoader extends THREE.Loader {
             model.three.visible = model.modl.flgs === 0;    // Adjust visibility based on flgs.
         }
         if (this.debug) console.log("parse::THREE Meshes constructed:", this.models);
+        return modelsMap;
+    }
 
-        // --- Step 3: Assemble the Scene Hierarchy ---
-        // Now that all objects are created, parent them correctly.
+    /**
+     * Assembles the scene hierarchy by parenting the newly created THREE.js objects.
+     * @param {THREE.Group} scene - The root scene group to add objects to.
+     * @param {Map<string, object>} modelsMap - A map of model names to model data.
+     */
+    _assembleSceneHierarchy(scene, modelsMap) {
         for (let model of this.models) {
             if (model.modl.prnt) {
                 const parent = modelsMap.get(model.modl.prnt.toLowerCase());
@@ -547,15 +650,23 @@ export class MSHLoader extends THREE.Loader {
             if (model.modl.geom && model.modl.geom.cloth) scene.userData.hasCloth = true;
             // If model has a skeleton, add flag to scene userData
             if (model.three.isSkinnedMesh) scene.userData.hasSkeleton = true;
-            // If model is a shadowvolume, add flag to scene userData.
-            if (model.three.userData.isShadowVolume) scene.userData.hasShadowVolume = true;
             // If model has vertex colors, add flag to scene userData.
             if (model.three.userData.hasVertexColors) scene.userData.hasVertexColors = true;
         }
         if (this.debug) console.log("parse::Scene hierarchy assembled.");
+    }
 
-        // --- Step 4: Create and Bind the Skeleton ---
-        // If any bones were created, we can now build the skeleton.
+    /**
+     * Creates a THREE.Skeleton from all bone objects and binds it to any
+     * SkinnedMesh objects in the scene.
+     * @param {THREE.Group} scene - The root scene group.
+     * @param {Map<string, object>} modelsMap - A map of model names to model data.
+     */
+    _createAndBindSkeleton(scene, modelsMap) {
+        const allBones = this.models
+            .filter(m => m.three?.isBone)
+            .map(m => m.three);
+
         if (allBones.length > 0) {
             scene.updateMatrixWorld(true); // Matrix MUST be updated before creating skelly
             // Create a single skeleton from the flat list of all bones. The hierarchy is already set up.
@@ -590,9 +701,14 @@ export class MSHLoader extends THREE.Loader {
             }
         }
         if (this.debug) console.log("parse::Skeleton bound to SkinnedMeshes.");
+    }
 
-        // --- Step 5: Create AnimationClips ---
-        // Convert the raw animation data into THREE.AnimationClip objects.
+    /**
+     * Converts the raw animation and keyframe data into THREE.AnimationClip objects.
+     * @param {THREE.Group} scene - The root scene group, used to find bones by name.
+     * @returns {Array<THREE.AnimationClip>} An array of created animation clips.
+     */
+    _createAnimationClips(scene) {
         const animationClips = [];
         for (const anim of this.animations) {
             const tracks = [];
@@ -631,8 +747,16 @@ export class MSHLoader extends THREE.Loader {
             if (this.debug) console.log("parse::THREE.AnimationClip created for:", anim.name);
         }
         if (this.debug) console.log("parse::AnimationClips created:", animationClips);
+        return animationClips;
+    }
 
-        // Store pulled msh data in scene.userData for later retrieval.
+    /**
+     * Populates the scene's `userData` object with the parsed data for easy access
+     * by the main application.
+     * @param {THREE.Group} scene - The root scene group.
+     * @param {Array<THREE.AnimationClip>} animationClips - The created animation clips.
+     */
+    _populateUserData(scene, animationClips) {
         scene.userData.textures = Array.from(this.textures);
         scene.userData.materials = this.materials;
         scene.userData.models = this.models;
@@ -641,8 +765,6 @@ export class MSHLoader extends THREE.Loader {
         scene.userData.keyframes = this.keyframes;
         scene.name = this.sceneInfo.name; // Give THREE.Scene name from sceneInfo.
         scene.animations = animationClips; // Attach AnimationClips to the scene's 'animations' property as THREE expects.
-        if (this.debug) console.log("parse::Scene userData objects assigned, scene ready:", scene);
-        return scene;
     }
 
     /**
@@ -704,9 +826,9 @@ export class MSHLoader extends THREE.Loader {
             frameEnd,
             fps,
             radius,
-            rotation: [rotationX, rotationY, rotationZ, rotationW],
-            center: [centerX, centerY, centerZ],
-            extents: [extentsX, extentsY, extentsZ],
+            rotation: new Float32Array([rotationX, rotationY, rotationZ, rotationW]),
+            center: new Float32Array([centerX, centerY, centerZ]),
+            extents: new Float32Array([extentsX, extentsY, extentsZ]),
         };
     }
 
@@ -725,7 +847,7 @@ export class MSHLoader extends THREE.Loader {
         byteOffset += 4;
         const materials = [];
         for (let i = 0; i < matCount; i++) {
-            let nameLength = 0, materialName = "", diffuseColor = [], specularColor = [], ambientColor = [],
+            let nameLength = 0, materialName = "", diffuseColor = new Float32Array(4), specularColor = new Float32Array(4), ambientColor = new Float32Array(4),
                 shininess = 0, flags = 0, renderType = 0, data0 = 0, data1 = 0, atrb = null, tx0d = null,
                 tx1d = null, tx2d = null, tx3d = null;
             // NAME and DATA chunks
@@ -735,27 +857,34 @@ export class MSHLoader extends THREE.Loader {
             materialName = this._readString(buffer, byteOffset, nameLength);
             byteOffset += nameLength;
             byteOffset += 8;
-            diffuseColor = [
-                this._readFloat32LE(buffer, byteOffset),
-                this._readFloat32LE(buffer, byteOffset + 4),
-                this._readFloat32LE(buffer, byteOffset + 8),
-                this._readFloat32LE(buffer, byteOffset + 12)
-            ];
-            byteOffset += 16;
-            specularColor = [
-                this._readFloat32LE(buffer, byteOffset),
-                this._readFloat32LE(buffer, byteOffset + 4),
-                this._readFloat32LE(buffer, byteOffset + 8),
-                this._readFloat32LE(buffer, byteOffset + 12)
-            ];
-            byteOffset += 16;
-            ambientColor = [
-                this._readFloat32LE(buffer, byteOffset),
-                this._readFloat32LE(buffer, byteOffset + 4),
-                this._readFloat32LE(buffer, byteOffset + 8),
-                this._readFloat32LE(buffer, byteOffset + 12)
-            ];
-            byteOffset += 16;
+            // Diffuse color
+            diffuseColor[0] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            diffuseColor[1] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            diffuseColor[2] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            diffuseColor[3] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            // Specular color
+            specularColor[0] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            specularColor[1] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            specularColor[2] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            specularColor[3] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            // Ambient color
+            ambientColor[0] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            ambientColor[1] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            ambientColor[2] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            ambientColor[3] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            // Specular decay/exponent/shininess
             shininess = this._readFloat32LE(buffer, byteOffset);
             byteOffset += 4;
             if (this._readString(buffer, byteOffset, 4) === "ATRB") {
@@ -927,27 +1056,31 @@ export class MSHLoader extends THREE.Loader {
             const tranSize = this._readUint32LE(buffer, byteOffset);
             byteOffset += 4;
             // Scale (XYZ)
-            const scale = [
-                this._readFloat32LE(buffer, byteOffset),
-                this._readFloat32LE(buffer, byteOffset + 4),
-                this._readFloat32LE(buffer, byteOffset + 8)
-            ];
-            byteOffset += 12;
+            const scale = new Float32Array(3);
+            scale[0] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            scale[1] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            scale[2] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
             // Rotation (XYZW)
-            const rotation = [
-                this._readFloat32LE(buffer, byteOffset),
-                this._readFloat32LE(buffer, byteOffset + 4),
-                this._readFloat32LE(buffer, byteOffset + 8),
-                this._readFloat32LE(buffer, byteOffset + 12)
-            ];
-            byteOffset += 16;
+            const rotation = new Float32Array(4);
+            rotation[0] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            rotation[1] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            rotation[2] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            rotation[3] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
             // Translation (XYZ)
-            const translation = [
-                this._readFloat32LE(buffer, byteOffset),
-                this._readFloat32LE(buffer, byteOffset + 4),
-                this._readFloat32LE(buffer, byteOffset + 8)
-            ];
-            byteOffset += 12;
+            const translation = new Float32Array(3);
+            translation[0] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            translation[1] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
+            translation[2] = this._readFloat32LE(buffer, byteOffset);
+            byteOffset += 4;
             // Check for GEOM
             const geomHeader = this._readString(buffer, byteOffset, 4);
             let geom = null;
@@ -1041,16 +1174,17 @@ export class MSHLoader extends THREE.Loader {
                                 const numTris = this._readUint32LE(buffer, byteOffset);
                                 byteOffset += 4;
                                 segm.ndxt.trianglesCCW = [];
-                                let triangleIndex = 0;
+                                const triangles = new Uint16Array(numTris * 3);
                                 for (let i = 0; i < numTris; i++) {
                                     if (byteOffset >= ndxtEnd) break;
-                                    segm.ndxt.trianglesCCW[triangleIndex++] = this._readUint16LE(buffer, byteOffset);
+                                    triangles[i * 3] = this._readUint16LE(buffer, byteOffset);
                                     byteOffset += 2;
-                                    segm.ndxt.trianglesCCW[triangleIndex++] = this._readUint16LE(buffer, byteOffset);
+                                    triangles[i * 3 + 1] = this._readUint16LE(buffer, byteOffset);
                                     byteOffset += 2;
-                                    segm.ndxt.trianglesCCW[triangleIndex++] = this._readUint16LE(buffer, byteOffset);
+                                    triangles[i * 3 + 2] = this._readUint16LE(buffer, byteOffset);
                                     byteOffset += 2;
                                 }
+                                segm.ndxt.trianglesCCW = Array.from(triangles);
                                 byteOffset = ndxtEnd;
                             } else if (segmentChild === "NDXL") {
                                 byteOffset += 4;
@@ -1079,9 +1213,9 @@ export class MSHLoader extends THREE.Loader {
                                 const strpEnd = byteOffset + strpSize;
                                 // Read the explicit number of indices for this strip chunk.
                                 const numIndices = this._readUint32LE(buffer, byteOffset);
-                                byteOffset += 4; 
-
-                                const allRawIndices = new Array(numIndices);
+                                byteOffset += 4;
+ 
+                                const allRawIndices = new Uint16Array(numIndices);
                                 for (let i = 0; i < numIndices; i++) {
                                     // Safety check to prevent reading past the chunk's declared end.
                                     if (byteOffset + 2 > strpEnd) {
@@ -1267,7 +1401,7 @@ export class MSHLoader extends THREE.Loader {
                                 const fwgtEnd = byteOffset + fwgtSize;
                                 const fwgtCount = this._readUint32LE(buffer, byteOffset);
                                 byteOffset += 4;
-                                clth.fwgt.pointCount = fwgtCount;
+                                clth.fwgt.pointCount = fwgtCount; 
                                 clth.fwgt.boneNames = new Array(fwgtCount);
                                 for (let i = 0; i < fwgtCount; i++) {
                                     if (byteOffset >= fwgtEnd) break;
@@ -1511,93 +1645,6 @@ export class MSHLoader extends THREE.Loader {
         }
         byteOffset = kfr3End;
         return { animations, keyframes };
-    }
-
-    /**
-     * A utility function to remove degenerate (zero-area or duplicate) triangles
-     * from an index list. This can help clean up messy geometry data.
-     * (Currently not used in the main parse loop due to potential side effects).
-     */
-    _cleanupTriangles(triangleIndices, vertexPositions) {
-        const seen = new Set()
-        const out = []
-
-        // Compute cross product of v × w
-        const cross = (v, w) => [
-            v[1] * w[2] - v[2] * w[1],
-            v[2] * w[0] - v[0] * w[2],
-            v[0] * w[1] - v[1] * w[0]
-        ]
-
-        for (let i = 0; i < triangleIndices.length; i += 3) {
-            const a = triangleIndices[i]
-            const b = triangleIndices[i + 1]
-            const c = triangleIndices[i + 2]
-
-            // Skip if degenerate by identical indices
-            if (a === b || b === c || c === a) continue
-
-            // Zero-area check via cross product
-            const ax = vertexPositions[3 * a], ay = vertexPositions[3 * a + 1], az = vertexPositions[3 * a + 2]
-            const bx = vertexPositions[3 * b], by = vertexPositions[3 * b + 1], bz = vertexPositions[3 * b + 2]
-            const cx = vertexPositions[3 * c], cy = vertexPositions[3 * c + 1], cz = vertexPositions[3 * c + 2]
-            const v0 = [bx - ax, by - ay, bz - az]
-            const v1 = [cx - ax, cy - ay, cz - az]
-            const cr = cross(v0, v1)
-
-            // If small enough, skip
-            if (Math.abs(cr[0]) < 1e-6 &&
-                Math.abs(cr[1]) < 1e-6 &&
-                Math.abs(cr[2]) < 1e-6) {
-                continue
-            }
-
-            // Undirected duplicate check: sort indices so [a,b,c] == any permutation
-            const sortedKey = [a, b, c]
-                .sort((x, y) => x - y)
-                .join(',')
-            // Skip if already seen
-            if (seen.has(sortedKey)) continue
-            seen.add(sortedKey)
-
-            // Keep the original CCW ordering
-            out.push(a, b, c)
-        }
-        return out
-    }
-
-    /**
-     * A utility function to remove duplicate vertices within a certain precision.
-     * (Currently not used due to possible side-effects).
-     */
-    _cleanupVertices(vertexPositions, precision = 5) {
-        // Precision of 1e-6 to 1e-4 is common
-        const seen = new Set()
-        const out = []
-        for (let i = 0; i < vertexPositions.length; i += 3) {
-            const x = vertexPositions[i]
-            const y = vertexPositions[i + 1]
-            const z = vertexPositions[i + 2]
-            const key = `${x.toFixed(precision)},${y.toFixed(precision)},${z.toFixed(precision)}`
-            if (seen.has(key)) continue
-            seen.add(key)
-            out.push(x, y, z)
-        }
-        return out
-    }
-
-    /**
-     * Configures and returns a THREE.FileLoader instance for loading the
-     * binary data from a URL.
-     */
-    _setupLoader(manager) {
-        manager = manager !== undefined ? manager : THREE.DefaultLoadingManager;
-        const loader = new THREE.FileLoader(manager);
-        loader.setPath(this.path)
-            .setWithCredentials(this.withCredentials)
-            .setRequestHeader(this.requestHeader)
-            .setResponseType("arraybuffer");
-        return loader;
     }
 
     /**
