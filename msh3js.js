@@ -46,7 +46,7 @@ const msh3js = {
     preferredGPU: "high-performance", // GPU preference
     aa: false, // anti-aliasing flag
     sampleCount: 0, // sample count
-    pixelRatio: window.devicePixelRatio ?? 1.0, // pixel ratio
+    pixelRatio: 1.0, // pixel ratio
     showStats: false, // Show stats flag
     showSkeleton: false, // Show skeleton helper
     clothSim: true, // Enable cloth simulation
@@ -56,10 +56,6 @@ const msh3js = {
     tweakpaneFont: "Orbitron", // Font for Tweakpane UI
     AR: false, // Enable AR viewing
     VR: false, // Enable VR viewing
-    bloomEnabled: false, // Enable bloom effect
-    bloomThreshold: 0.85, // Bloom threshold
-    bloomStrength: 0.5, // Bloom strength
-    bloomRadius: 0.3, // Bloom radius
   },
   // Three.JS objects
   three: {
@@ -263,13 +259,6 @@ const msh3js = {
     if (options.backgroundColor != null && isHexColor(options.backgroundColor)) msh3js.options.backgroundColor = options.backgroundColor;
     if (options.backgroundImage != null && isString(options.backgroundImage)) msh3js.options.backgroundImage = options.backgroundImage;
 
-    if (options.bloom) {
-      assignOption('bloomEnabled', options.bloom.enabled, isBoolean);
-      assignOption('bloomThreshold', options.bloom.threshold, isNumberInRange(0, 1));
-      assignOption('bloomStrength', options.bloom.strength, isNumberInRange(0, 3));
-      assignOption('bloomRadius', options.bloom.radius, isNumberInRange(0, 1));
-    }
-
     if (options.cloth) {
       assignOption('clothSim', options.cloth.enabled, isBoolean);
       assignOption('clothWindSpeed', options.cloth.windSpeed, isNumberInRange(0, 10));
@@ -460,7 +449,6 @@ const msh3js = {
       autoRotateSpeed: null,
       backgroundColor: null,
       backgroundImage: null,
-      bloom: null, // { enabled, threshold, strength, radius } - Note: Not fully implemented yet
       cloth: null, // { enabled, windSpeed, windDirection }
       controlDamping: null,
       dirLight1: null, // { color, intensity, azimuth, elevation }
@@ -1066,46 +1054,6 @@ const msh3js = {
       msh3js.pane.refresh(); // Refresh to show the new default
       await msh3js.recreateRenderer();
     });
-
-    const bloomFolder = threeTab.addFolder({
-      title: "Bloom",
-      expanded: false,
-    });
-
-    const bloomEnableControl = bloomFolder.addBinding(msh3js.options, "bloomEnabled", {
-      label: "Enable Bloom"
-    }).on("change", (ev) => {
-      if (msh3js.debug) console.log("tweakpane::Bloom set to:", ev.value);
-    });
-    // While testing, disable
-    bloomEnableControl.disabled = true;
-
-    const bloomThresholdControl = bloomFolder.addBinding(msh3js.options, "bloomThreshold", {
-      label: "Threshold",
-      min: 0, max: 1, step: 0.01
-    }).on("change", (ev) => {
-      if (msh3js.debug) console.log("tweakpane::Bloom threshold set to:", ev.value);
-    });
-    // While testing, disable
-    bloomThresholdControl.disabled = true;
-
-    const bloomStrengthControl = bloomFolder.addBinding(msh3js.options, "bloomStrength", {
-      label: "Strength",
-      min: 0, max: 3, step: 0.01
-    }).on("change", (ev) => {
-      if (msh3js.debug) console.log("tweakpane::Bloom strength set to:", ev.value);
-    });
-    // While testing, disable
-    bloomStrengthControl.disabled = true;
-
-    const bloomRadiusControl = bloomFolder.addBinding(msh3js.options, "bloomRadius", {
-      label: "Radius",
-      min: 0, max: 1, step: 0.01
-    }).on("change", (ev) => {
-      if (msh3js.debug) console.log("tweakpane::Bloom radius set to:", ev.value);
-    });
-    // While testing, disable
-    bloomRadiusControl.disabled = true;
 
     const clothFolder = threeTab.addFolder({
       title: "Cloth Simulation",
@@ -2216,7 +2164,6 @@ const msh3js = {
         if (material.glow) {
           material.three.emissive = new THREE.Color(0xffffff);
           material.three.emissiveMap = threeTexture;
-          // TODO: Enable bloom if bitFlags or renderFlags = glow
         }
 
         if (material.matd.atrb.renderFlags.refracted || material.matd.atrb.renderFlags.ice) {
