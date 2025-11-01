@@ -10,6 +10,10 @@ import { MSHLoader } from "MSHLoader";
 import { TGALoader } from "three/addons/loaders/TGALoader.js";
 import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
 import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 // Note: The following will be imported dynamically instead
 //import { ViewHelper } from "view-helper";
 //import { Pane } from "tweakpane";
@@ -47,9 +51,13 @@ const msh3js = {
     aa: false, // anti-aliasing flag
     sampleCount: 0, // sample count
     pixelRatio: 1.0, // pixel ratio
+    bloomEnabled: false, // Enable bloom effect
+    bloomStrength: 1.5, // Bloom strength
+    bloomRadius: 0.1, // Bloom radius
+    bloomThreshold: 0.0, // Bloom threshold
     showStats: false, // Show stats flag
     showSkeleton: false, // Show skeleton helper
-    clothSim: true, // Enable cloth simulation
+    clothSim: false, // Enable cloth simulation
     clothWindSpeed: 2.0, // Wind speed for cloth simulation
     clothWindDirection: 280.0, // Wind direction in degrees (0-360)
     renderingAPI: 'webgl2', // webgl or webgl2
@@ -57,6 +65,7 @@ const msh3js = {
     AR: false, // Enable AR viewing
     VR: false, // Enable VR viewing
   },
+  params: null, // Start params, can override options
   // Three.JS objects
   three: {
     // Three.JS loading manager
@@ -99,11 +108,18 @@ const msh3js = {
     viewHelper: null,
     // Skeleton helper
     skeletonHelper: null,
-    // Three.JS cube camera for environment mapping
+    // Three.JS cube camera for refraction envmap
     cubeCamera: null,
-    // Camera state for cubecam optimization
+    // Camera state for refraction cubecam optimization
     lastCameraPosition: null,
     lastCameraQuaternion: null,
+    // Post-processing for bloom
+    composer: null,
+    bloomPass: null,
+    bloomComposer: null,
+    renderPass: null,
+    darkMaterial: new THREE.MeshBasicMaterial({ color: "black" }),
+    materialsToRestore: {},
     // Pre-compiled lists for render loop optimization
     dynamic: {
       scrollingMaterials: [],
@@ -121,9 +137,6 @@ const msh3js = {
     animationSpeed: 1.0,
     animationPlaying: false,
     animationLoop: true,
-    textureURLs: [],
-    models: [],
-    materials: [],
   },
   // App rendering time
   renderTime: 0.0,
@@ -259,6 +272,13 @@ const msh3js = {
     if (options.backgroundColor != null && isHexColor(options.backgroundColor)) msh3js.options.backgroundColor = options.backgroundColor;
     if (options.backgroundImage != null && isString(options.backgroundImage)) msh3js.options.backgroundImage = options.backgroundImage;
 
+    if (options.bloom) {
+      assignOption('bloomEnabled', options.bloom.enabled, isBoolean);
+      assignOption('bloomThreshold', options.bloom.threshold, isNumberInRange(0.0, 1.0));
+      assignOption('bloomStrength', options.bloom.strength, isNumberInRange(0.0, 3.0));
+      assignOption('bloomRadius', options.bloom.radius, isNumberInRange(0.0, 1.0));
+    }
+
     if (options.cloth) {
       assignOption('clothSim', options.cloth.enabled, isBoolean);
       assignOption('clothWindSpeed', options.cloth.windSpeed, isNumberInRange(0, 10));
@@ -376,7 +396,7 @@ const msh3js = {
     }
 
     // Set a default AA sample count if it wasn't specified
-    const userSetSampleCount = (msh3jsOptions != null) || (options.AAsampleCount != null);
+    const userSetSampleCount = (msh3jsOptions != null) || (options.AAsampleCount != null || options.AA != null);
     if (!userSetSampleCount) {
       const apiFeatures = msh3js._supportedFeatures[msh3js.options.renderingAPI];
       if (apiFeatures.aa) {
@@ -449,6 +469,7 @@ const msh3js = {
       autoRotateSpeed: null,
       backgroundColor: null,
       backgroundImage: null,
+      bloom: null, // { enabled, threshold, strength, radius }
       cloth: null, // { enabled, windSpeed, windDirection }
       controlDamping: null,
       dirLight1: null, // { color, intensity, azimuth, elevation }
@@ -563,6 +584,9 @@ const msh3js = {
       msh3js.three.renderer = renderer;
       msh3js.context = context;
     }
+
+    if (!msh3js.three.composer || !msh3js.three.bloomComposer) msh3js.createComposer();
+
     if (!msh3js.three.loadingManager) msh3js.createLoaders();
 
     if (!msh3js.three.viewHelper)
@@ -1055,9 +1079,33 @@ const msh3js = {
       await msh3js.recreateRenderer();
     });
 
+    // Bloom controls
+    const hasGlow = msh3js.three.msh.some(msh => 
+      msh.materials.some(mat => 
+        mat.matd?.atrb?.renderFlags?.glow || mat.matd?.atrb?.bitFlags?.glow
+      )
+    );
+    const bloomFolder = threeTab.addFolder({
+      title: "Bloom",
+      expanded: hasGlow,
+    });
+    bloomFolder.addBinding(msh3js.options, "bloomEnabled", { label: "Enabled" }).on("change", () => {
+      msh3js.three.bloomPass.enabled = msh3js.options.bloomEnabled;
+    });
+    bloomFolder.addBinding(msh3js.options, "bloomStrength", { label: "Strength", min: 0, max: 3, step: 0.01 }).on("change", () => {
+      if (msh3js.three.bloomPass) msh3js.three.bloomPass.strength = msh3js.options.bloomStrength;
+    });
+    bloomFolder.addBinding(msh3js.options, "bloomRadius", { label: "Radius", min: 0, max: 1, step: 0.01 }).on("change", () => {
+      if (msh3js.three.bloomPass) msh3js.three.bloomPass.radius = msh3js.options.bloomRadius;
+    });
+    bloomFolder.addBinding(msh3js.options, "bloomThreshold", { label: "Threshold", min: 0, max: 1, step: 0.01 }).on("change", () => {
+      if (msh3js.three.bloomPass) msh3js.three.bloomPass.threshold = msh3js.options.bloomThreshold;
+    });
+
+    const hasCloth = msh3js.three.msh.some(msh => msh.hasCloth);
     const clothFolder = threeTab.addFolder({
       title: "Cloth Simulation",
-      expanded: true,
+      expanded: hasCloth,
     });
 
     clothFolder.addBinding(msh3js.options, "clothSim", {
@@ -1262,7 +1310,7 @@ const msh3js = {
         msh3js.three.renderer.setPixelRatio(msh3js.options.pixelRatio);
         msh3js.resize();
         if (msh3js.options.enableViewHelper && msh3js.three.viewHelper)
-          msh3js.three.viewHelper.update();
+          msh3js.recreateRenderer();
       });
 
     // GPU Preference Control (high-performance vs low-power).
@@ -1547,7 +1595,6 @@ const msh3js = {
         // First frame, always consider it as "moved" to trigger the initial cubemap render
         cameraMoved = true;
       }
-
       // Only update the cubemap if the camera has moved
       if (cameraMoved) {
         // Calculate the center of all refractive objects
@@ -1575,13 +1622,18 @@ const msh3js = {
       }
     }
 
-    // Clear color buffer
-    msh3js.three.renderer.clear(true, true, true);
+    // Render bloom pass to a texture
+    // Temporarily replace non-glowing materials with a black material
+    msh3js.prepareBloomPass();
+    msh3js.three.bloomComposer.render(elapsedTime);
+    // Restore the original materials
+    msh3js.restoreOriginalMaterials();
 
-    // Render a frame
-    msh3js.three.renderer.render(msh3js.three.scene, msh3js.three.camera);
+    // Render the final scene with the bloom effect composited on top
+    msh3js.three.composer.render(elapsedTime);
 
     // Update the view helper
+    // This needs to be done after all other rendering to draw on top.
     if (msh3js.options.enableViewHelper === true && msh3js.three.viewHelper) {
       msh3js.three.renderer.clearDepth();
       msh3js.three.viewHelper.render();
@@ -1647,6 +1699,12 @@ const msh3js = {
         msh3js.three.camera.updateProjectionMatrix();
       }
 
+      // Resize composer
+      if (msh3js.three.composer != null)
+        msh3js.three.composer.setSize(
+          Math.floor(msh3js.size.width),
+          Math.floor(msh3js.size.height));
+
       // Resize viewHelper
       if (msh3js.options.enableViewHelper === true)
         msh3js.three.viewHelper.update();
@@ -1688,12 +1746,6 @@ const msh3js = {
 
     // Process only the newly loaded MSH data to append to UI and dynamic lists
     for (const msh of newMshData) {
-      // Add new materials, avoiding duplicates
-      for (const material of msh.materials) {
-        if (!msh3js.ui.materials.find(m => m.name === material.name)) {
-          msh3js.ui.materials.push(material);
-        }
-      }
       const shadowCasterClones = []; // Store clones to be added after traversal
       // Add new models (meshes), cloth meshes, and collision objects, avoiding duplicates
       msh.group.traverse((childObj) => {
@@ -1731,18 +1783,18 @@ const msh3js = {
     }
 
     // Populate dynamic material lists for render loop optimization
-    for (const material of msh3js.ui.materials) { // Iterate over all materials
-      if (material.scrolling && !msh3js.three.dynamic.scrollingMaterials.includes(material)) {
-        msh3js.three.dynamic.scrollingMaterials.push(material);
-      }
-      if (material.three.map?.userData.isAnimated && !msh3js.three.dynamic.animatedMaterials.includes(material)) {
-        msh3js.three.dynamic.animatedMaterials.push(material);
-      }
-      if (material.pulsate && !msh3js.three.dynamic.pulsatingMaterials.includes(material)) {
-        msh3js.three.dynamic.pulsatingMaterials.push(material);
-      }
-      if (material.matd?.atrb?.renderFlags?.refracted) {
-        for (const msh of msh3js.three.msh) {
+    for (const msh of msh3js.three.msh) {
+      for (const material of msh.materials) { // Iterate over all materials
+        if (material.scrolling && !msh3js.three.dynamic.scrollingMaterials.includes(material)) {
+          msh3js.three.dynamic.scrollingMaterials.push(material);
+        }
+        if (material.three.map?.userData.isAnimated && !msh3js.three.dynamic.animatedMaterials.includes(material)) {
+          msh3js.three.dynamic.animatedMaterials.push(material);
+        }
+        if (material.pulsate && !msh3js.three.dynamic.pulsatingMaterials.includes(material)) {
+          msh3js.three.dynamic.pulsatingMaterials.push(material);
+        }
+        if (material.matd?.atrb?.renderFlags?.refracted) {
           msh.group.traverse((child) => {
             if (child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three)) {
               if (!msh3js.three.dynamic.refractiveMeshes.includes(child)) {
@@ -1771,11 +1823,22 @@ const msh3js = {
 
     // If any of the newly loaded models have cloth, enable the simulation by default
     const anyNewCloth = newMshData.some(msh => msh.hasCloth);
-    if (anyNewCloth) {
+    if (anyNewCloth && !msh3js.params?.cloth?.enabled) {
       msh3js.options.clothSim = true;
-      if (msh3js.pane) msh3js.pane.refresh(); // Update the UI checkbox
       await msh3js.initClothSimulations(); // Start the simulation immediately
       if (msh3js.debug) console.log("processFiles::Cloth detected in new files, initializing simulation.");
+    }
+
+    // If any of the newly loaded models have glow, enable bloom by default
+    const anyNewGlow = newMshData.some(msh =>
+      msh.materials.some(mat =>
+        mat.matd?.atrb?.renderFlags?.glow || mat.matd?.atrb?.bitFlags?.glow
+      )
+    );
+    if (anyNewGlow && !msh3js.params?.bloom?.enabled) {
+      msh3js.options.bloomEnabled = true;
+      if (msh3js.three.bloomPass) msh3js.three.bloomPass.enabled = true;
+      if (msh3js.debug) console.log("processFiles::Glow detected in new files, enabling bloom.");
     }
 
     // Rebuild Tweakpane pane if already present for msh tab
@@ -1829,6 +1892,55 @@ const msh3js = {
 
     // Return true if at least one file was processed
     return fileProcessed;
+  },
+
+  // Prepares the scene for the bloom pass by replacing non-glowing materials
+  prepareBloomPass() {
+    msh3js.three.scene.traverse((obj) => {
+      if (obj.isMesh) {
+        msh3js.three.materialsToRestore[obj.uuid] = obj.material; // Save original material(s)
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        let hasGlow = false;
+
+        const newMaterials = materials.map(originalMat => {
+          // Find the corresponding MSH material data
+          let mshMat = null;
+          for (const msh of msh3js.three.msh) {
+            mshMat = msh.materials.find(m => m.three === originalMat);
+            if (mshMat) break;
+          }
+
+          // Check for the glow flags
+          if (mshMat && (mshMat.matd?.atrb?.renderFlags?.glow || mshMat.matd?.atrb?.bitFlags?.glow)) {
+            hasGlow = true;
+            return originalMat; // Keep the glowing material
+          } else {
+            return msh3js.three.darkMaterial; // Replace with black
+          }
+        });
+
+        if (hasGlow) {
+          obj.material = Array.isArray(obj.material) ? newMaterials : newMaterials[0];
+        } else {
+          obj.material = msh3js.three.darkMaterial;
+        }
+      } else if (obj.isLine || obj.isSprite) {
+        // Also darken helpers like GridHelper, SkeletonHelper, ViewHelper sprites, etc.
+        msh3js.three.materialsToRestore[obj.uuid] = obj.material;
+        obj.material = msh3js.three.darkMaterial;
+      }
+    });
+  },
+
+  // Restores the original materials after the bloom pass
+  restoreOriginalMaterials() {
+    for (const uuid in msh3js.three.materialsToRestore) {
+      const obj = msh3js.three.scene.getObjectByProperty('uuid', uuid);
+      if (obj) {
+        obj.material = msh3js.three.materialsToRestore[uuid];
+      }
+    }
+    msh3js.three.materialsToRestore = {};
   },
 
   /**
@@ -1938,7 +2050,7 @@ const msh3js = {
                 if (child.isMesh && !child.userData.isCloth && !child.name.toLowerCase().startsWith("c_") &&
                   !child.name.toLowerCase().startsWith("p_") && !child.name.toLowerCase().includes("collision") &&
                   !child.name.toLowerCase().endsWith("_lod2") && !child.name.toLowerCase().endsWith("_lod3") &&
-                  !child.name.toLowerCase().includes("lowres") && !child.name.toLowerCase().includes("lowrez") && 
+                  !child.name.toLowerCase().includes("lowres") && !child.name.toLowerCase().includes("lowrez") &&
                   !child.name.toLowerCase().includes("shadowvolume") && !child.name.toLowerCase().startsWith("sv_")) {
                   let shadowMesh = null;
                   const baseName = child.name.replace(/_lod[23]|_lowres|_lowrez/i, '');
@@ -2433,8 +2545,7 @@ const msh3js = {
     newRenderer.setPixelRatio(params.pixelRatio);
     newRenderer.setClearColor(0x0000AA);
     newRenderer.autoClear = false;
-    //newRenderer.outputEncoding = THREE.sRGBEncoding; //r151
-    newRenderer.outputColorSpace = THREE.LinearSRGBColorSpace; //r152+
+    newRenderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 
     msh3js.three.renderer = newRenderer;
     msh3js.context = newContext;
@@ -2466,6 +2577,18 @@ const msh3js = {
       msh3js.three.orbitControls = null;
       if (msh3js.debug) console.log("recreateRenderer::OrbitControls disposed.");
     }
+    // Dispose of composers
+    if (msh3js.three.composer) {
+      msh3js.three.composer.dispose();
+      msh3js.three.composer = null;
+    }
+    if (msh3js.three.bloomComposer) {
+      msh3js.three.bloomComposer.dispose();
+      msh3js.three.bloomComposer = null;
+    }
+    msh3js.three.renderPass = null;
+    msh3js.three.bloomPass = null;
+    if (msh3js.debug) console.log("recreateRenderer::Composers disposed.");
     // Dispose of renderer
     if (msh3js.three.renderer) {
       msh3js.three.renderer.dispose();
@@ -2508,6 +2631,74 @@ const msh3js = {
 
     if (msh3js.debug)
       console.log("recreateRenderer::Renderer recreated.");
+  },
+
+  // Create and assign Three.js EffectComposer
+  createComposer() {
+    if (!msh3js.three.renderer || !msh3js.three.scene || !msh3js.three.camera) {
+      console.error("createComposer::Renderer, Scene, or Camera not initialized.");
+      return null;
+    }
+
+    // Shaders for selective bloom post-processing
+    const vertexShader = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+      }
+    `;
+
+    const fragmentShader = `
+      uniform sampler2D baseTexture;
+      uniform sampler2D bloomTexture;
+      varying vec2 vUv;
+      void main() {
+        gl_FragColor = texture2D( baseTexture, vUv ) + texture2D( bloomTexture, vUv );
+      }
+    `;
+
+    // 1. Create a RenderPass for the main scene.
+    const renderPass = new RenderPass(msh3js.three.scene, msh3js.three.camera);
+
+    // 2. Create the bloom pass.
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(msh3js.size.width, msh3js.size.height),
+      msh3js.options.bloomStrength,
+      msh3js.options.bloomRadius,
+      msh3js.options.bloomThreshold
+    );
+    msh3js.three.bloomPass = bloomPass;
+
+    // 3. Create a composer for the bloom pass only.
+    const bloomComposer = new EffectComposer(msh3js.three.renderer);
+    bloomComposer.renderToScreen = false; // Don't render to screen
+    bloomComposer.addPass(renderPass);
+    bloomComposer.addPass(bloomPass);
+    msh3js.three.bloomComposer = bloomComposer;
+
+    // 4. Create the final composer that combines the scene and the bloom effect.
+    const composer = new EffectComposer(msh3js.three.renderer);
+    composer.addPass(renderPass);
+    // This ShaderPass takes the bloom texture and adds it to the scene texture.
+    const finalPass = new ShaderPass(
+      new THREE.ShaderMaterial({
+        uniforms: {
+          baseTexture: { value: null },
+          bloomTexture: { value: bloomComposer.renderTarget2.texture }
+        },
+        vertexShader: vertexShader,
+        fragmentShader: fragmentShader,
+        defines: {}
+      }), "baseTexture"
+    );
+    finalPass.needsSwap = true;
+    composer.addPass(finalPass);
+    msh3js.three.composer = composer;
+    msh3js.three.renderPass = renderPass;
+
+    // Set initial enabled state
+    msh3js.three.bloomPass.enabled = msh3js.options.bloomEnabled;
   },
 
   // Recreates the ViewHelper with current settings.

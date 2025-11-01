@@ -156,34 +156,6 @@ class ViewHelper extends THREE.Object3D {
     }
   }
 
-  // Safely reads viewport/scissor from renderer, handling WebGPURenderer null returns (Three.js r151+)
-  _safeGetViewport(target) {
-    if (typeof this.renderer.getViewport === "function") {
-      const result = this.renderer.getViewport(target);
-      if (result !== null && result !== undefined && typeof result.x === "number") {
-        target.copy(result); // WebGLRenderer returns a Vector4
-      } else {
-        // WebGPURenderer likely returns null or undefined
-        target.set(0, 0, this.domElement.clientWidth, this.domElement.clientHeight);
-      }
-    } else {
-      target.set(0, 0, this.domElement.clientWidth, this.domElement.clientHeight);
-    }
-  }
-
-  _safeGetScissor(target) {
-    if (typeof this.renderer.getScissor === "function") {
-      const result = this.renderer.getScissor(target);
-      if (result !== null && result !== undefined && typeof result.x === "number") {
-        target.copy(result);
-      } else {
-        target.set(0, 0, this.domElement.clientWidth, this.domElement.clientHeight);
-      }
-    } else {
-      target.set(0, 0, this.domElement.clientWidth, this.domElement.clientHeight);
-    }
-  }
-
   _startListening() {
     this.domContainer.onpointerdown = (e) => this._onPointerDown(e);
     this.domContainer.onpointermove = (e) => this._onPointerMove(e);
@@ -397,10 +369,9 @@ class ViewHelper extends THREE.Object3D {
     // Update DOM rect and dimensions needed for pointer calculations
     this.domRect = this.domContainer.getBoundingClientRect();
     // Ensure offsetHeight is read from the correct element if domElement is just the canvas
-    this.offsetHeight = this.domElement.clientHeight; // Use clientHeight for canvas size
-    this._setRadius(); // Update radius in case camera moved
-    //this.renderer.getViewport(this.viewport); // Get main viewport dimensions
-    this._safeGetViewport(this.viewport); // Previous method didn't work with webGPU
+    this.offsetHeight = this.domElement.clientHeight;
+    this._setRadius();
+    this.renderer.getViewport(this.viewport);
 
     this.updateOrientation(); // Sync helper orientation with camera
   }
@@ -417,39 +388,46 @@ class ViewHelper extends THREE.Object3D {
     this._updateSpritesOpacity(); // Adjust sprite visibility based on orientation
   }
 
-  render() {
-    if (!this.enabled) return; // Skip rendering if disabled
-    const delta = this.clock.getDelta();
-    if (this.animating) this._animate(delta);
+render() {
+  if (!this.enabled) return;
+  const delta = this.clock.getDelta();
+  if (this.animating) this._animate(delta);
 
-    // Calculate viewport position for the helper
-    const x = this.domRect.left;
-    const y = this.renderer.domElement.clientHeight - this.domRect.bottom; // Y is from bottom in WebGL
-    //const y = this.offsetHeight - this.domRect.bottom; // Y is from bottom in WebGL
-
-    const currentViewport = new THREE.Vector4();
-    //this.renderer.getViewport(currentViewport); // Get current viewport dimensions
-    const currentScissor = new THREE.Vector4();
-    //this.renderer.getScissor(currentScissor); // Get current scissor dimensions
-    const currentScissorTest = this.renderer.getScissorTest(); // Get current scissor test state
-    this._safeGetViewport(currentViewport);
-    this._safeGetScissor(currentScissor);
+  // Get canvas bounding rect
+  const canvasRect = this.renderer.domElement.getBoundingClientRect();
   
-    // Temporarily change renderer settings for helper rendering
-    const autoClear = this.renderer.autoClear;
-    this.renderer.autoClear = false; // Don't clear the main scene
+  // Get pixel ratio from renderer
+  const pixelRatio = this.renderer.getPixelRatio();
+  
+  // Calculate position relative to canvas in CSS pixels
+  const cssX = this.domRect.left - canvasRect.left;
+  const cssY = canvasRect.bottom - this.domRect.bottom;
+  
+  // Convert to render buffer coordinates
+  const x = cssX * pixelRatio;
+  const y = cssY * pixelRatio;
+  const scaledSize = this.size * pixelRatio;
 
-    this.renderer.setViewport(x, y, this.size, this.size); // Set helper viewport
-    this.renderer.setScissor(x, y, this.size, this.size); // Set scissor to match viewport
-    this.renderer.setScissorTest(true); // Enable scissor test
+  const currentViewport = new THREE.Vector4();
+  this.renderer.getViewport(currentViewport);
+  const currentScissor = new THREE.Vector4();
+  this.renderer.getScissor(currentScissor);
+  const currentScissorTest = this.renderer.getScissorTest();
+  
+  const autoClear = this.renderer.autoClear;
+  this.renderer.autoClear = false;
 
-    this.renderer.render(this, this.orthoCamera); // Render the helper scene
+  this.renderer.setViewport(x, y, scaledSize, scaledSize);
+  this.renderer.setScissor(x, y, scaledSize, scaledSize);
+  this.renderer.setScissorTest(true);
 
-    this.renderer.setViewport(currentViewport); // Restore main viewport
-    this.renderer.setScissor(currentScissor); // Restore main scissor
-    this.renderer.setScissorTest(currentScissorTest); // Restore scissor test state
-    this.renderer.autoClear = autoClear; // Restore autoClear setting
-  }
+  this.renderer.render(this, this.orthoCamera);
+
+  this.renderer.setViewport(currentViewport);
+  this.renderer.setScissor(currentScissor);
+  this.renderer.setScissorTest(currentScissorTest);
+  this.renderer.autoClear = autoClear;
+}
 
   // --- Controls Integration ---
 
