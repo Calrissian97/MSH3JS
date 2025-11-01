@@ -1622,15 +1622,19 @@ const msh3js = {
       }
     }
 
-    // Render bloom pass to a texture
-    // Temporarily replace non-glowing materials with a black material
-    msh3js.prepareBloomPass();
-    msh3js.three.bloomComposer.render(elapsedTime);
-    // Restore the original materials
-    msh3js.restoreOriginalMaterials();
-
-    // Render the final scene with the bloom effect composited on top
-    msh3js.three.composer.render(elapsedTime);
+    if (msh3js.options.bloomEnabled) {
+      // Render bloom pass to a texture
+      // Temporarily replace non-glowing materials with a black material
+      msh3js.prepareBloomPass();
+      msh3js.three.bloomComposer.render(elapsedTime);
+      // Restore the original materials
+      msh3js.restoreOriginalMaterials();
+      // Render the final scene with the bloom effect composited on top
+      msh3js.three.composer.render(elapsedTime);
+    } else {
+      // If bloom is disabled, just render the scene normally.
+      msh3js.three.renderer.render(msh3js.three.scene, msh3js.three.camera);
+    }
 
     // Update the view helper
     // This needs to be done after all other rendering to draw on top.
