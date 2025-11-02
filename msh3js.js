@@ -46,10 +46,11 @@ const msh3js = {
     ambLightIntensity: 1.0, // Ambient light intensity
     enableViewHelper: true, // Visibility of view helper
     viewHelperColors: { x: "#AA0000", y: "#00AA00", z: "#0000AA" }, // View helper colors
-    enableShadows: true, // Enable shadows
+    enableShadows: false, // Enable shadows
     preferredGPU: "high-performance", // GPU preference
     aa: false, // anti-aliasing flag
     sampleCount: 0, // sample count
+    anisotropicFiltering: 1,
     pixelRatio: window.devicePixelRatio ?? 1.0, // pixel ratio
     bloomEnabled: false, // Enable bloom effect
     bloomStrength: 1.5, // Bloom strength
@@ -65,7 +66,7 @@ const msh3js = {
     AR: false, // Enable AR viewing
     VR: false, // Enable VR viewing
   },
-  params: null, // Start params, can override options
+  startOptions: null, // Start options, can override saved app options
   // Three.JS objects
   three: {
     // Three.JS loading manager
@@ -113,13 +114,6 @@ const msh3js = {
     // Camera state for refraction cubecam optimization
     lastCameraPosition: null,
     lastCameraQuaternion: null,
-    // Post-processing for bloom
-    composer: null,
-    bloomPass: null,
-    bloomComposer: null,
-    renderPass: null,
-    darkMaterial: new THREE.MeshBasicMaterial({ color: "black" }),
-    materialsToRestore: {},
     // Pre-compiled lists for render loop optimization
     dynamic: {
       scrollingMaterials: [],
@@ -129,6 +123,15 @@ const msh3js = {
       clothMeshes: [],
       collisionObjects: [],
     },
+    // Post-processing for bloom
+    composer: null,
+    bloomPass: null,
+    bloomComposer: null,
+    renderPass: null,
+    darkMaterial: new THREE.MeshBasicMaterial({ color: "black" }),
+    materialsToRestore: {},
+    // Scene bounds
+    sceneBounds: null,
   },
   // Proxy object(s) for tweakpane to decouple from three
   ui: {
@@ -137,6 +140,7 @@ const msh3js = {
     animationSpeed: 1.0,
     animationPlaying: false,
     animationLoop: true,
+    missingTextures: new Set(),
   },
   // App rendering time
   renderTime: 0.0,
@@ -192,6 +196,7 @@ const msh3js = {
   _supportedFeatures: {
     webgl: { supported: false, aa: false, maxSamples: 0, reverseDepth: false, sampleCountOptions: [] }, // WebGL support flag
     webgl2: { supported: false, aa: false, maxSamples: 0, reverseDepth: true, sampleCountOptions: [] }, // WebGL2 support flag
+    maxAnisotropy: 1, // Max samples for anisotropic filtering
     localStorage: false, // LocalStorage support flag
     persistentStorage: false, // PersistentStorage support flag
     serviceWorker: false, // ServiceWorker support flag
@@ -207,7 +212,7 @@ const msh3js = {
   async initApp(params, options = {}) {
     if (msh3js.debug) console.log("initApp::params:", params);
     // Store params for startThree from processFiles (launch files)
-    msh3js.params = params;
+    msh3js.startOptions = options;
 
     // Test for localStorage permissions
     if (window.localStorage) {
@@ -265,6 +270,7 @@ const msh3js = {
       msh3js.options.sampleCount = options.AAsampleCount;
       msh3js.options.aa = options.AAsampleCount > 0;
     }
+    if (options.anisotropicFiltering != null && isNumberInRange(1, 16)) msh3js.options.anisotropicFiltering = options.anisotropicFiltering;
     if (options.ambLightColor != null && isHexColor(options.ambLightColor)) msh3js.options.ambLightColor = options.ambLightColor;
     if (options.ambLightIntensity != null && isNumberInRange(0, 10)(options.ambLightIntensity)) msh3js.options.ambLightIntensity = options.ambLightIntensity;
     if (options.autoRotate != null && isBoolean(options.autoRotate)) msh3js.options.autoRotate = options.autoRotate;
@@ -309,7 +315,7 @@ const msh3js = {
       msh3js.options.showSkeleton = options.displayHelpers;
     }
 
-    assignOption('enableShadows', options.displayShadows, isBoolean);
+    assignOption('enableShadows', options.enableShadows, isBoolean);
     assignOption('showStats', options.displayStats, isBoolean);
     assignOption('displayTweakpane', options.displayTweakpane, isBoolean);
 
@@ -462,6 +468,7 @@ const msh3js = {
   async startApp(canvas = null,
     options = {
       AA: null,
+      anisotropicFiltering: null,
       AAsampleCount: null,
       ambLightColor: null,
       ambLightIntensity: null,
@@ -475,7 +482,7 @@ const msh3js = {
       dirLight1: null, // { color, intensity, azimuth, elevation }
       dirLight2: null, // { color, intensity, azimuth, elevation }
       displayHelpers: null,
-      displayShadows: null,
+      enableShadows: null,
       displayStats: null,
       displayTweakpane: null,
       GPU: null,
@@ -494,6 +501,8 @@ const msh3js = {
       console.log("startApp::canvas:", canvas);
       console.log("startApp::options:", optionsPassed ? options : "defaults");
     }
+    // Seal ms3js
+    Object.seal(msh3js);
 
     // --- Locate/Create HTML elements ---
     // Get canvas container (a div or the body if not found)
@@ -558,7 +567,7 @@ const msh3js = {
     if (options.urls && Array.isArray(options.urls) && options.urls.length > 0) {
       await msh3js.loadFromUrls(options.urls);
     }
-    await msh3js.startThree(params);
+    await msh3js.startThree(options);
   },
 
   // Setup any unpopulated three.js components
@@ -596,7 +605,7 @@ const msh3js = {
   },
 
   // Begins three.js setup and rendering
-  async startThree(params = {}) {
+  async startThree(options = {}) {
     THREE.ColorManagement.enabled = true;
     await msh3js.initThree();
 
@@ -625,6 +634,20 @@ const msh3js = {
       }
     }
 
+    // Set max anisotropy from renderer capabilities
+    if (msh3js.three.renderer) {
+      msh3js._supportedFeatures.maxAnisotropy = msh3js.three.renderer.capabilities.getMaxAnisotropy();
+      if (msh3js.debug) console.log("startThree::Max anisotropy:", msh3js._supportedFeatures.maxAnisotropy);
+      // Validate passed value is supported now that we have max value
+      if (msh3js.options.anisotropicFiltering > msh3js._supportedFeatures.maxAnisotropy ||
+        msh3js.options.anisotropicFiltering === 1
+      ) {
+        msh3js.options.anisotropicFiltering = msh3js._supportedFeatures.maxAnisotropy;
+        if (msh3js.debug) console.log("initApp::Anisotropic filtering value exceeds max supported. " +
+          `Falling back to ${msh3js._supportedFeatures.maxAnisotropy}.`);
+      }
+    }
+
     msh3js.three.dirLight.intensity = msh3js.options.dirLightIntensity;
     msh3js.three.dirLight2.color.set(msh3js.options.dirLight2Color);
     msh3js.three.dirLight2.intensity = msh3js.options.dirLight2Intensity;
@@ -635,7 +658,7 @@ const msh3js = {
       await msh3js.initStats(msh3js.options.showStats);
     }
     if (msh3js.options.displayTweakpane !== false) {
-      await msh3js.initTweakpane(params.displayTweakpane);
+      await msh3js.initTweakpane(options.displayTweakpane);
     }
     // Set animation loop
     if (msh3js.three.renderer) {
@@ -847,17 +870,17 @@ const msh3js = {
         }
       }
 
-      // Missing Textures Folder
-      const missingTextureNames = new Set();
-      for (const requiredTexture of mshData.requiredTextures) {
-        if (!msh3js._files.hasOwnProperty(requiredTexture.toLowerCase())) {
-          missingTextureNames.add(requiredTexture);
-        }
-      }
+      // Create a folder for missing textures specific to this MSH
+      const mshMissingTextures = mshData.requiredTextures.filter(tex =>
+        msh3js.ui.missingTextures.has(tex.toLowerCase())
+      );
 
-      if (missingTextureNames.size > 0) {
-        const missingTexturesFolder = mshFolder.addFolder({ title: "Missing Textures", expanded: true });
-        Array.from(missingTextureNames).forEach((textureName, index) => {
+      if (mshMissingTextures.length > 0) {
+        const missingTexturesFolder = mshFolder.addFolder({
+          title: "Missing Textures",
+          expanded: true,
+        });
+        mshMissingTextures.forEach((textureName, index) => {
           missingTexturesFolder.addBinding({ file: textureName }, 'file', { readonly: true, label: `File ${index + 1}` });
         });
       }
@@ -1313,6 +1336,33 @@ const msh3js = {
           msh3js.recreateRenderer();
       });
 
+    // Anisotropic filtering dropdown.
+    const anisotropyOptions = [1, 2, 4, 8, 16]
+      .filter(v => v <= msh3js._supportedFeatures.maxAnisotropy)
+      .map(v => ({ text: `${v}x`, value: v }));
+
+    renderingFolder
+      .addBinding(msh3js.options, "anisotropicFiltering", {
+        label: "Anisotropic Filtering",
+        options: anisotropyOptions,
+      })
+      .on("change", async () => {
+        if (msh3js.debug) console.log("tweakpane::Anisotropy set to:", msh3js.options.anisotropicFiltering);
+        // Apply filtering to maps and normalMaps
+        for (const mshData of msh3js.three.msh) {
+          for (const material of mshData.materials) {
+            if (material.three.map) {
+              material.three.map.anisotropy = msh3js.options.anisotropicFiltering;
+              material.three.map.needsUpdate = true;
+            }
+            if (material.three.normalMap) {
+              material.three.normalMap.anisotropy = msh3js.options.anisotropicFiltering;
+              material.three.normalMap.needsUpdate = true;
+            }
+          }
+        }
+      });
+
     // GPU Preference Control (high-performance vs low-power).
     renderingFolder
       .addBinding(msh3js.options, "preferredGPU", {
@@ -1735,7 +1785,7 @@ const msh3js = {
   // Process input files for rendering, returns success if msh processed
   async processFiles() {
     // Start Three
-    if (msh3js.three.scene == null) await msh3js.startThree(msh3js.params);
+    if (msh3js.three.scene == null) await msh3js.startThree(msh3js.startOptions);
 
     // Only process files that have not been processed yet
     const filesToProcess = Object.values(msh3js._files).filter(f => !f.processed);
@@ -1746,86 +1796,86 @@ const msh3js = {
     const newMshData = await msh3js.processMshFiles(filesToProcess);
     const optionsProcessed = await msh3js.processOptionFiles(filesToProcess);
     const texturesProcessed = await msh3js.processTgaFiles(filesToProcess);
-    // Process only the newly loaded MSH data to append to dynamic lists
+
+    // Add shadow casters for imported shadowvolumes
     for (const msh of newMshData) {
-      const shadowCasterClones = []; // Store clones to be added after traversal
-      // Add new models (meshes), cloth meshes, and collision objects, avoiding duplicates
-      msh.group.traverse((childObj) => {
-        if (childObj.isMesh) {
-          // If the mesh is a shadow volume, clone it and add it to its parent.
-          if ((childObj.userData.isShadowVolume || childObj.userData.shouldBeShadowCaster)) {
-            const shadowClone = childObj.clone();
-            shadowClone.name = `${childObj.name}_ShadowCaster`;
-            shadowClone.castShadow = true;
-            shadowClone.visible = true; // Original sv is hidden by default
-            // The clone's material only writes to the depth buffer for shadow casting.
-            shadowClone.material = new THREE.MeshDepthMaterial({
-              transparent: true,
-              opacity: 0,
-              depthWrite: false,
-              depthTest: true,
-            });
-            shadowCasterClones.push({ clone: shadowClone, parent: childObj.parent });
-            if (msh3js.debug) console.log(`processFiles::Cloned shadow volume: ${childObj.name} for shadow casting.`);
-          }
+      if (msh.hasShadowVolume) {
+        if (msh3js.startOptions?.enableShadows !== false)
+          msh3js.options.enableShadows = true;
+        const shadowCasterClones = []; // Store clones to be added after traversal
+        // Add new models (meshes), cloth meshes, and collision objects, avoiding duplicates
+        msh.group.traverse((childObj) => {
+          if (childObj.isMesh) {
+            // If the mesh is a shadow volume, clone it and add it to its parent.
+            if ((childObj.userData.isShadowVolume || childObj.userData.shouldBeShadowCaster)) {
+              const shadowClone = childObj.clone();
+              shadowClone.name = `${childObj.name}_ShadowCaster`;
+              shadowClone.castShadow = true;
+              shadowClone.visible = true; // Original sv is hidden by default
+              // The clone's material only writes to the depth buffer for shadow casting.
+              shadowClone.material = new THREE.MeshDepthMaterial({
+                transparent: true,
+                opacity: 0,
+                depthWrite: false,
+                depthTest: true,
+              });
+              shadowCasterClones.push({ clone: shadowClone, parent: childObj.parent });
+              if (msh3js.debug) console.log(`processFiles::Cloned shadow volume: ${childObj.name} for shadow casting.`);
+            }
 
-          if (childObj.userData.isCloth) {
-            // The full cloth sim object will be created and pushed in initClothSimulations
-          } else if (childObj.name.toLowerCase().startsWith("c_") && !msh3js.three.dynamic.collisionObjects.find(c => c.uuid === childObj.uuid)) {
-            msh3js.three.dynamic.collisionObjects.push(childObj);
+            if (childObj.userData.isCloth) {
+              // The full cloth sim object will be created and pushed in initClothSimulations
+            } else if (childObj.name.toLowerCase().startsWith("c_") && !msh3js.three.dynamic.collisionObjects.find(c => c.uuid === childObj.uuid)) {
+              msh3js.three.dynamic.collisionObjects.push(childObj);
+            }
           }
+        });
+
+        // Add the shadow caster clones to the scene after the traversal is complete
+        // This prevents them from being visited by the traverse() call and added to the UI.
+        for (const { clone, parent } of shadowCasterClones) {
+          parent.add(clone);
         }
-      });
-
-      // Add the shadow caster clones to the scene after the traversal is complete
-      // This prevents them from being visited by the traverse() call and added to the UI.
-      for (const { clone, parent } of shadowCasterClones) {
-        parent.add(clone);
       }
     }
 
     // Populate dynamic material lists for render loop optimization
-    for (const msh of msh3js.three.msh) {
-      for (const material of msh.materials) { // Iterate over all materials
-        if (material.scrolling && !msh3js.three.dynamic.scrollingMaterials.includes(material)) {
-          msh3js.three.dynamic.scrollingMaterials.push(material);
+    for (const msh of newMshData) { // Iterate over new models
+      // Add any newly discovered missing textures to our running total.
+      for (const requiredTexture of msh.requiredTextures) {
+        const textureName = requiredTexture.toLowerCase();
+        if (!msh3js._files.hasOwnProperty(textureName)) {
+          msh3js.ui.missingTextures.add(textureName);
         }
-        if (material.three.map?.userData.isAnimated && !msh3js.three.dynamic.animatedMaterials.includes(material)) {
-          msh3js.three.dynamic.animatedMaterials.push(material);
-        }
-        if (material.pulsate && !msh3js.three.dynamic.pulsatingMaterials.includes(material)) {
-          msh3js.three.dynamic.pulsatingMaterials.push(material);
-        }
+      }
+      for (const material of msh.materials) {
         if (material.matd?.atrb?.renderFlags?.refracted) {
           msh.group.traverse((child) => {
             if (child.isMesh && (Array.isArray(child.material) ? child.material.includes(material.three) : child.material === material.three)) {
-              if (!msh3js.three.dynamic.refractiveMeshes.includes(child)) {
+              if (!msh3js.three.dynamic.refractiveMeshes.includes(child)) { // This check is still needed
                 msh3js.three.dynamic.refractiveMeshes.push(child);
               }
             }
           });
         }
+        if (material.scrolling) {
+          msh3js.three.dynamic.scrollingMaterials.push(material);
+        }
+        if (material.three.map?.userData.isAnimated) {
+          msh3js.three.dynamic.animatedMaterials.push(material);
+        }
+        if (material.pulsate) {
+          msh3js.three.dynamic.pulsatingMaterials.push(material);
+        }
       }
     }
     if (msh3js.debug) console.log("processFiles::Dynamic material lists populated:", msh3js.three.dynamic);
 
-    const fileProcessed = newMshData.length > 0 || optionsProcessed || texturesProcessed;
-
-    // Re-calculate the list of all missing textures from scratch
-    const missingTextureNames = new Set();
-    for (const msh of msh3js.three.msh) {
-      for (const requiredTexture of msh.requiredTextures) {
-        const texture = requiredTexture.toLowerCase();
-        // Check against the master list of provided files (_files)
-        const textureFound = msh3js._files.hasOwnProperty(texture);
-        if (!textureFound) missingTextureNames.add(texture);
-      }
-    }
-    msh3js.ui.missingTextures = Array.from(missingTextureNames);
+    const fileProcessed = newMshData.length > 0;
 
     // If any of the newly loaded models have cloth, enable the simulation by default
     const anyNewCloth = newMshData.some(msh => msh.hasCloth);
-    if (anyNewCloth && !msh3js.params?.cloth?.enabled) {
+    if (anyNewCloth && !msh3js.startOptions?.cloth?.enabled) {
       msh3js.options.clothSim = true;
       await msh3js.initClothSimulations(); // Start the simulation immediately
       if (msh3js.debug) console.log("processFiles::Cloth detected in new files, initializing simulation.");
@@ -1837,7 +1887,7 @@ const msh3js = {
         mat.matd?.atrb?.renderFlags?.glow || mat.matd?.atrb?.bitFlags?.glow ||
         mat.matd?.atrb?.renderFlags.glowScroll)
     );
-    if (anyNewGlow && !msh3js.params?.bloom?.enabled) {
+    if (anyNewGlow && !msh3js.startOptions?.bloom?.enabled) {
       msh3js.options.bloomEnabled = true;
       if (msh3js.three.bloomPass) msh3js.three.bloomPass.enabled = true;
       if (msh3js.debug) console.log("processFiles::Glow detected in new files, enabling bloom.");
@@ -1852,19 +1902,17 @@ const msh3js = {
 
     // If a file was processed, update scene-dependent elements like light helpers
     if (fileProcessed) {
-      msh3js.frameCamera(); // Frame the camera on the entire scene
+      // Calculate the total bounding box of all loaded MSH objects
+      const totalBoundingBox = msh3js.getSceneBounds();
+
+      if (msh3js.three.msh.length === 1)
+        msh3js.frameCamera(msh3js.three.msh[0].group); // Frame the camera on the msh
+      else
+        msh3js.frameCamera(); // Frame the camera on the entire scene
+
       // Recalculate light positions based on the new total scene bounds
       msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
       msh3js.calculateLightPosition(msh3js.three.dirLight2, msh3js.options.dirLight2Azimuth, msh3js.options.dirLight2Elevation);
-
-      // Calculate the total bounding box of all loaded MSH objects
-      const totalBoundingBox = new THREE.Box3();
-      for (const msh of msh3js.three.msh) {
-        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
-        if (!mshBBox.isEmpty()) {
-          totalBoundingBox.union(mshBBox);
-        }
-      }
 
       // Determine a reasonable size for the helpers based on the scene's bounding sphere radius
       const sceneRadius = totalBoundingBox.getBoundingSphere(new THREE.Sphere()).radius;
@@ -1917,6 +1965,7 @@ const msh3js = {
         hasCloth: mshScene.userData.hasCloth,
         hasSkeleton: mshScene.userData.hasSkeleton,
         hasVertexColors: mshScene.userData.hasVertexColors,
+        hasShadowVolume: mshScene.userData.hasShadowVolume,
         animations: mshScene.userData.animations,
         keyframes: mshScene.userData.keyframes,
       };
@@ -2048,7 +2097,8 @@ const msh3js = {
                   }
                 }
               });
-
+              if (msh3js.startOptions?.enableShadows !== false)
+                msh3js.options.enableShadows = true;
               // If a value was provided, skip the next part of the line
               if (lodValue > 0 || (i + 1 < parts.length && !isNaN(parseInt(parts[i + 1])))) {
                 i++;
@@ -2150,6 +2200,11 @@ const msh3js = {
             if (requiredLower.includes(fileNameLower)) {
               msh.textures.push(threeTexture);
               for (const material of msh.materials) {
+                // If this texture was previously missing, remove it from the UI list.
+                if (msh3js.ui.missingTextures.has(fileNameLower)) {
+                  msh3js.ui.missingTextures.delete(fileNameLower);
+                  if (msh3js.debug) console.log(`processTgaFiles::Removed ${fileNameLower} from missing textures list.`);
+                }
                 msh3js.applyTextureToMaterial(threeTexture, material, msh);
               }
             }
@@ -2238,6 +2293,9 @@ const msh3js = {
       case 'diffuse':
         material.three.map = threeTexture;
         material.three.wireframe = false;
+        material.three.anisotropy = msh3js.options.anisotropicFiltering;
+        material.three.needsUpdate = true;
+
 
         if (material.specular) {
           const { data, width, height } = threeTexture.image;
@@ -2252,6 +2310,7 @@ const msh3js = {
           alphaTexture.colorSpace = THREE.LinearSRGBColorSpace;
           alphaTexture.wrapS = THREE.RepeatWrapping;
           alphaTexture.wrapT = THREE.RepeatWrapping;
+          alphaTexture.anisotropy = msh3js.options.anisotropicFiltering;
           alphaTexture.needsUpdate = true;
           material.three.specularMap = alphaTexture;
           alphaTexture.name = threeTexture.name + "_alpha";
@@ -2362,7 +2421,9 @@ const msh3js = {
           } else {
             if (msh3js.debug) console.log('processMaterial::Texture detected as normal map (color).');
             threeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+            threeTexture.anisotropy = msh3js.options.anisotropicFiltering;
             material.three.normalMap = threeTexture;
+            material.three.normalMap.needsUpdate = true;
           }
         }
         msh.textures.push(threeTexture);
@@ -2878,6 +2939,27 @@ const msh3js = {
     return msh3js.three.camera;
   },
 
+  // Calculates and returns the total bounding box for all visible MSH objects in the scene.
+  getSceneBounds() {
+    const totalBoundingBox = new THREE.Box3();
+    if (msh3js.three.msh.length > 0) {
+      for (const msh of msh3js.three.msh) {
+        // Create a temporary box for the current MSH group.
+        const mshBBox = new THREE.Box3();
+        // The `true` parameter makes setFromObject traverse all children.
+        // It respects the `visible` property of objects.
+        mshBBox.setFromObject(msh.group, true);
+        // If the bounding box is not empty, merge it into the total.
+        if (!mshBBox.isEmpty()) {
+          totalBoundingBox.union(mshBBox);
+        }
+      }
+    }
+    msh3js.three.sceneBounds = totalBoundingBox;
+    if (msh3js.debug) console.log("getSceneBounds::Scene bounds calculated: ", totalBoundingBox);
+    return totalBoundingBox;
+  },
+
   // Frame camera to fit an object's bounding box
   frameCamera(obj = null, margin = 1.0) {
     if (!msh3js.three.camera) msh3js.createCamera(); // Ensure camera exists
@@ -2894,19 +2976,7 @@ const msh3js = {
           target.union(childBBox);
         }
       });
-    } else if (msh3js.three.msh.length > 0) {
-      for (const msh of msh3js.three.msh) {
-        msh.group.traverse((child) => {
-          // Only include visible meshes and skinned meshes in the bounding box calculation.
-          if ((child.isMesh || child.isSkinnedMesh) && child.visible && child.geometry) {
-            if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
-            const childBBox = child.geometry.boundingBox.clone();
-            childBBox.applyMatrix4(child.matrixWorld);
-            target.union(childBBox);
-          }
-        });
-      }
-    }
+    } else if (msh3js.three.msh.length > 0) target.copy(msh3js.three.sceneBounds ?? msh3js.getSceneBounds());
 
     if (target.isEmpty()) {
       return false;
@@ -3247,16 +3317,7 @@ const msh3js = {
     }
 
     // Calculate the total bounding box of all loaded MSH objects to correctly position the light
-    const totalBoundingBox = new THREE.Box3();
-    if (msh3js.three.msh.length > 0) {
-      for (const msh of msh3js.three.msh) {
-        const mshBBox = new THREE.Box3().setFromObject(msh.group, true);
-        if (!mshBBox.isEmpty()) {
-          totalBoundingBox.union(mshBBox);
-        }
-      }
-    }
-
+    const totalBoundingBox = msh3js.three.sceneBounds ?? msh3js.getSceneBounds();
     const sceneSphere = totalBoundingBox.getBoundingSphere(new THREE.Sphere());
     const center = sceneSphere.center;
     const radius = sceneSphere.radius > 0 ? sceneSphere.radius : 10; // Use a default radius if scene is empty

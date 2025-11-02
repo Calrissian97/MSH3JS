@@ -176,7 +176,7 @@
       const options = {
         AA: null, // {boolean} Enable/disable anti-aliasing. Overrides sampleCount if set to false.
         AAsampleCount: null, // {number} Desired anti-aliasing sample count (e.g., 0, 2, 4, 8). 0 disables AA.
-        // Note: Will be adjusted to the closest supported value for the chosen rendering API.
+        anisotropicFiltering: null,
         ambLightColor: null, // {string} Hex color string for the ambient light (e.g., "#4d4d4d").
         ambLightIntensity: null, // {number} Intensity of the ambient light (e.g., 1.0).
         autoRotate: null, // {boolean} Enable/disable automatic rotation of the camera.
@@ -208,9 +208,9 @@
           elevation: null, // {number} Elevation angle in degrees (-90 - 90) for secondary light direction.
         }, */
         displayHelpers: null, // {boolean} If true, enables dirLight, dirLight2, ViewHelper, Grid, and Skeleton helpers.
-        displayShadows: null, // {boolean} Enable/disable shadows.
         displayStats: null, // {boolean} Show/hide the performance stats panel.
         displayTweakpane: null, // {boolean} Show/hide the Tweakpane UI.
+        enableShadows: null, // {boolean} Enable/disable shadows.
         GPU: null, // {string} "default", "low-power", or "high-performance".
         pixelRatio: null, // {number} Device pixel ratio multiplier (e.g., 1.0, 2.0).
         renderingAPI: null, // {string} "webgl" or "webgl2". Will fall back if not supported.

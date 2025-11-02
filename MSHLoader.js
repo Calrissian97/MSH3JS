@@ -652,6 +652,8 @@ export class MSHLoader extends THREE.Loader {
             if (model.three.isSkinnedMesh) scene.userData.hasSkeleton = true;
             // If model has vertex colors, add flag to scene userData.
             if (model.three.userData.hasVertexColors) scene.userData.hasVertexColors = true;
+            // If model is a shadowvolume, add flag to scene userData
+            if (model.three.userData.isShadowVolume) scene.userData.hasShadowVolume = true;
         }
         if (this.debug) console.log("parse::Scene hierarchy assembled.");
     }
