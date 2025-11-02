@@ -50,7 +50,7 @@ const msh3js = {
     preferredGPU: "high-performance", // GPU preference
     aa: false, // anti-aliasing flag
     sampleCount: 0, // sample count
-    pixelRatio: 1.0, // pixel ratio
+    pixelRatio: window.devicePixelRatio ?? 1.0, // pixel ratio
     bloomEnabled: false, // Enable bloom effect
     bloomStrength: 1.5, // Bloom strength
     bloomRadius: 0.1, // Bloom radius
@@ -1080,8 +1080,8 @@ const msh3js = {
     });
 
     // Bloom controls
-    const hasGlow = msh3js.three.msh.some(msh => 
-      msh.materials.some(mat => 
+    const hasGlow = msh3js.three.msh.some(msh =>
+      msh.materials.some(mat =>
         mat.matd?.atrb?.renderFlags?.glow || mat.matd?.atrb?.bitFlags?.glow
       )
     );
@@ -1623,7 +1623,6 @@ const msh3js = {
     }
 
     if (msh3js.options.bloomEnabled) {
-      // Render bloom pass to a texture
       // Temporarily replace non-glowing materials with a black material
       msh3js.prepareBloomPass();
       msh3js.three.bloomComposer.render(elapsedTime);
@@ -1747,8 +1746,7 @@ const msh3js = {
     const newMshData = await msh3js.processMshFiles(filesToProcess);
     const optionsProcessed = await msh3js.processOptionFiles(filesToProcess);
     const texturesProcessed = await msh3js.processTgaFiles(filesToProcess);
-
-    // Process only the newly loaded MSH data to append to UI and dynamic lists
+    // Process only the newly loaded MSH data to append to dynamic lists
     for (const msh of newMshData) {
       const shadowCasterClones = []; // Store clones to be added after traversal
       // Add new models (meshes), cloth meshes, and collision objects, avoiding duplicates
@@ -1836,8 +1834,8 @@ const msh3js = {
     // If any of the newly loaded models have glow, enable bloom by default
     const anyNewGlow = newMshData.some(msh =>
       msh.materials.some(mat =>
-        mat.matd?.atrb?.renderFlags?.glow || mat.matd?.atrb?.bitFlags?.glow
-      )
+        mat.matd?.atrb?.renderFlags?.glow || mat.matd?.atrb?.bitFlags?.glow ||
+        mat.matd?.atrb?.renderFlags.glowScroll)
     );
     if (anyNewGlow && !msh3js.params?.bloom?.enabled) {
       msh3js.options.bloomEnabled = true;
@@ -1850,11 +1848,6 @@ const msh3js = {
     if (msh3js.debug) console.log("processFiles::Files processed:", msh3js._files);
 
     // Cleanup URLs after loading is complete
-    for (const fileObj of Object.values(msh3js._files)) {
-      URL.revokeObjectURL(fileObj.url);
-      fileObj.url = null;
-    }
-
     msh3js.hideLoadingBar();
 
     // If a file was processed, update scene-dependent elements like light helpers
@@ -1896,55 +1889,6 @@ const msh3js = {
 
     // Return true if at least one file was processed
     return fileProcessed;
-  },
-
-  // Prepares the scene for the bloom pass by replacing non-glowing materials
-  prepareBloomPass() {
-    msh3js.three.scene.traverse((obj) => {
-      if (obj.isMesh) {
-        msh3js.three.materialsToRestore[obj.uuid] = obj.material; // Save original material(s)
-        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-        let hasGlow = false;
-
-        const newMaterials = materials.map(originalMat => {
-          // Find the corresponding MSH material data
-          let mshMat = null;
-          for (const msh of msh3js.three.msh) {
-            mshMat = msh.materials.find(m => m.three === originalMat);
-            if (mshMat) break;
-          }
-
-          // Check for the glow flags
-          if (mshMat && (mshMat.matd?.atrb?.renderFlags?.glow || mshMat.matd?.atrb?.bitFlags?.glow)) {
-            hasGlow = true;
-            return originalMat; // Keep the glowing material
-          } else {
-            return msh3js.three.darkMaterial; // Replace with black
-          }
-        });
-
-        if (hasGlow) {
-          obj.material = Array.isArray(obj.material) ? newMaterials : newMaterials[0];
-        } else {
-          obj.material = msh3js.three.darkMaterial;
-        }
-      } else if (obj.isLine || obj.isSprite) {
-        // Also darken helpers like GridHelper, SkeletonHelper, ViewHelper sprites, etc.
-        msh3js.three.materialsToRestore[obj.uuid] = obj.material;
-        obj.material = msh3js.three.darkMaterial;
-      }
-    });
-  },
-
-  // Restores the original materials after the bloom pass
-  restoreOriginalMaterials() {
-    for (const uuid in msh3js.three.materialsToRestore) {
-      const obj = msh3js.three.scene.getObjectByProperty('uuid', uuid);
-      if (obj) {
-        obj.material = msh3js.three.materialsToRestore[uuid];
-      }
-    }
-    msh3js.three.materialsToRestore = {};
   },
 
   /**
@@ -1991,6 +1935,23 @@ const msh3js = {
       msh3js.createSkeletonHelper();
     }
 
+    // After loading new models, re-run option file processing in case they can now be applied.
+    const unprocessedOptionFiles = Object.values(msh3js._files).filter(f => f.file.name.toLowerCase().endsWith(".msh.option") && !f.applied);
+    if (unprocessedOptionFiles.length > 0) {
+      await msh3js.processOptionFiles(unprocessedOptionFiles);
+    }
+
+    // After loading new models, check if any pre-loaded textures can now be applied.
+    for (const newMsh of mshFilesToProcess) {
+      for (const texture of Object.values(msh3js._files)) {
+        if (texture.threeTexture && newMsh.requiredTextures.map(t => t.toLowerCase()).includes(texture.file.name.toLowerCase())) {
+          for (const material of newMsh.materials) {
+            msh3js.applyTextureToMaterial(texture.threeTexture, material, newMsh);
+          }
+        }
+      }
+    }
+
     return mshFilesToProcess;
   },
 
@@ -2000,22 +1961,28 @@ const msh3js = {
    * @returns {Promise<boolean>} A promise that resolves to true if any option file was processed.
    */
   async processOptionFiles(filesToProcess) {
-    let anyFileProcessed = false;
     const optionFiles = filesToProcess.filter(f => f.file.name.toLowerCase().endsWith(".msh.option"));
+    if (optionFiles.length === 0) return false;
+
+    let anyFileProcessed = false;
 
     for (const optionFileObj of optionFiles) {
-      if (optionFileObj.processed) continue;
+      // If the option file has already been successfully applied, skip it.
+      if (optionFileObj.applied) continue;
 
       const optionFileName = optionFileObj.file.name.toLowerCase();
       const targetMshName = optionFileName.replace(/\.option$/, '');
+
+      // Read and store the text content if we haven't already.
+      if (!optionFileObj.optionText)
+        optionFileObj.optionText = await optionFileObj.file.text();
 
       // Find the corresponding loaded MSH data
       const mshData = msh3js.three.msh.find(m => m.fileName.toLowerCase() === targetMshName);
 
       if (mshData) {
         if (msh3js.debug) console.log(`processOptionFiles::Found option file for already loaded MSH: ${mshData.fileName}`);
-        const optionText = await optionFileObj.file.text();
-        const lines = optionText.split(/\r?\n/);
+        const lines = optionFileObj.optionText.split(/\r?\n/);
 
         for (const line of lines) {
           const parts = line.trim().split(/\s+/).filter(p => p);
@@ -2127,6 +2094,15 @@ const msh3js = {
             }
           }
         }
+        // Mark as processed and applied.
+        optionFileObj.processed = true;
+        optionFileObj.applied = true;
+        msh3js.updateLoadingBar();
+        anyFileProcessed = true;
+      } else if (!optionFileObj.processed) {
+        // If the MSH isn't found, but we haven't marked this as processed yet (i.e., first time seeing it),
+        // mark it as processed to count it for the loading bar, but leave `applied` as false.
+        if (msh3js.debug) console.log(`processOptionFiles::Option file ${optionFileObj.file.name} loaded, but matching MSH not found yet. Storing for later.`);
         optionFileObj.processed = true;
         msh3js.updateLoadingBar();
         anyFileProcessed = true;
@@ -2144,21 +2120,17 @@ const msh3js = {
     let anyFileProcessed = false;
     for (const fileObj of filesToProcess) {
       if (!fileObj.file.name.toLowerCase().endsWith(".tga")) continue;
+      if (fileObj.processed) continue;
 
-      let isRequired = false;
-      for (const msh of msh3js.three.msh) {
-        const requiredLower = msh.requiredTextures.map(t => t.toLowerCase());
-        const fileNameLower = fileObj.file.name.toLowerCase();
-        if (requiredLower.includes(fileNameLower) || requiredLower.includes(fileNameLower.replace(/_bump\.tga$/, '.tga'))) {
-          isRequired = true;
-          break;
-        }
-      }
+      // If no models are loaded yet, we'll load the texture and store it for later.
+      // If models are loaded, we check if this texture is required by any of them.
+      let isRequiredByAnyModel = msh3js.three.msh.some(msh =>
+        msh.requiredTextures.map(t => t.toLowerCase()).includes(fileObj.file.name.toLowerCase())
+      );
 
-      if (isRequired) {
-        if (fileObj.processed) continue;
-
-        console.log("processTgaFiles::Loading texture:", fileObj.file.name);
+      // Load the texture if no models are present yet, or if it's required by an existing model.
+      if (msh3js.three.msh.length === 0 || isRequiredByAnyModel) {
+        if (msh3js.debug) console.log("processTgaFiles::Loading texture:", fileObj.file.name);
         try {
           const threeTexture = await msh3js.three.tgaLoader.loadAsync(fileObj.url);
           threeTexture.name = fileObj.file.name;
@@ -2167,12 +2139,15 @@ const msh3js = {
           threeTexture.wrapT = THREE.RepeatWrapping;
           threeTexture.flipY = true;
 
+          // Store the loaded THREE.Texture on the file object for later use.
+          fileObj.threeTexture = threeTexture;
+
+          // If models that need this texture are already present, apply it now.
           for (const msh of msh3js.three.msh) {
             const requiredLower = msh.requiredTextures.map(t => t.toLowerCase());
             const fileNameLower = fileObj.file.name.toLowerCase();
-            const baseTextureName = fileNameLower.replace(/_bump\.tga$/, '.tga');
 
-            if (requiredLower.includes(fileNameLower) || requiredLower.includes(baseTextureName)) {
+            if (requiredLower.includes(fileNameLower)) {
               msh.textures.push(threeTexture);
               for (const material of msh.materials) {
                 msh3js.applyTextureToMaterial(threeTexture, material, msh);
@@ -2182,13 +2157,20 @@ const msh3js = {
 
           fileObj.processed = true;
           anyFileProcessed = true;
+          // Now that it's processed, we can revoke the URL.
+          URL.revokeObjectURL(fileObj.url);
+          fileObj.url = null;
+
           msh3js.updateLoadingBar();
         } catch (error) {
           console.error("processTgaFiles::Error loading texture:", fileObj.file.name, error);
+          msh3js.updateLoadingBar(); // Still update bar on error
         }
-      } else if (msh3js.three.msh.length > 0) {
-        if (msh3js.debug) console.log(`processTgaFiles::Discarding unrequired texture: ${fileObj.file.name}`);
-        delete msh3js._files[fileObj.file.name.toLowerCase()];
+      } else {
+        // If models are loaded but this texture isn't required by any of them, we can skip it.
+        if (msh3js.debug) console.log(`processTgaFiles::Skipping unrequired texture: ${fileObj.file.name}`);
+        // We don't delete it, as it might be needed by a future model.
+        // We also don't mark it as processed, so it can be re-evaluated later.
       }
     }
     return anyFileProcessed;
@@ -2703,6 +2685,56 @@ const msh3js = {
 
     // Set initial enabled state
     msh3js.three.bloomPass.enabled = msh3js.options.bloomEnabled;
+  },
+
+  // Prepares the scene for the bloom pass by replacing non-glowing materials
+  prepareBloomPass() {
+    msh3js.three.scene.traverse((obj) => {
+      if (obj.isMesh) {
+        msh3js.three.materialsToRestore[obj.uuid] = obj.material; // Save original material(s)
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        let hasGlow = false;
+
+        const newMaterials = materials.map(originalMat => {
+          // Find the corresponding MSH material data
+          let mshMat = null;
+          for (const msh of msh3js.three.msh) {
+            mshMat = msh.materials.find(m => m.three === originalMat);
+            if (mshMat) break;
+          }
+
+          // Check for the glow flags
+          if (mshMat && (mshMat.matd?.atrb?.renderFlags?.glow || mshMat.matd?.atrb?.bitFlags?.glow ||
+            mshMat.matd?.atrb?.renderFlags.glowScroll)) {
+            hasGlow = true;
+            return originalMat; // Keep the glowing material
+          } else {
+            return msh3js.three.darkMaterial; // Replace with black
+          }
+        });
+
+        if (hasGlow) {
+          obj.material = Array.isArray(obj.material) ? newMaterials : newMaterials[0];
+        } else {
+          obj.material = msh3js.three.darkMaterial;
+        }
+      } else if (obj.isLine || obj.isSprite) {
+        // Also darken helpers like GridHelper, SkeletonHelper, ViewHelper sprites, etc.
+        msh3js.three.materialsToRestore[obj.uuid] = obj.material;
+        obj.material = msh3js.three.darkMaterial;
+      }
+    });
+  },
+
+  // Restores the original materials after the bloom pass
+  restoreOriginalMaterials() {
+    for (const uuid in msh3js.three.materialsToRestore) {
+      const obj = msh3js.three.scene.getObjectByProperty('uuid', uuid);
+      if (obj) {
+        obj.material = msh3js.three.materialsToRestore[uuid];
+      }
+    }
+    msh3js.three.materialsToRestore = {};
   },
 
   // Recreates the ViewHelper with current settings.
