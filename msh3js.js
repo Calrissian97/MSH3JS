@@ -814,6 +814,7 @@ const msh3js = {
           const modelFolder = mshModelsFolder.addFolder({ title: model.name, expanded: false });
           if (!model.userData.originalPosition) model.userData.originalPosition = model.position.clone();
           if (!model.userData.originalRotation) model.userData.originalRotation = model.rotation.clone();
+          if (!model.userData.originalScale) model.userData.originalScale = model.scale.clone();
 
           modelFolder.addBinding(model, "visible", { label: "Visible" });
 
@@ -836,6 +837,17 @@ const msh3js = {
             rotationFolder.addButton({ title: "Reset" }).on("click", () => {
               if (model.userData.originalRotation) {
                 model.rotation.copy(model.userData.originalRotation);
+                pane.refresh();
+              }
+            });
+
+            const scaleFolder = modelFolder.addFolder({ title: "Scale", expanded: false });
+            scaleFolder.addBinding(model.scale, "x", { min: 0.01, max: 10, step: 0.01, label: "X" });
+            scaleFolder.addBinding(model.scale, "y", { min: 0.01, max: 10, step: 0.01, label: "Y" });
+            scaleFolder.addBinding(model.scale, "z", { min: 0.01, max: 10, step: 0.01, label: "Z" });
+            scaleFolder.addButton({ title: "Reset" }).on("click", () => {
+              if (model.userData.originalScale) {
+                model.scale.copy(model.userData.originalScale);
                 pane.refresh();
               }
             });
@@ -2183,6 +2195,21 @@ const msh3js = {
                   skinWeight.needsUpdate = true;
                 }
               });
+            } else if (command === "-scale") {
+              const scaleValueStr = parts[i + 1];
+              if (scaleValueStr) {
+                const scaleValue = parseFloat(scaleValueStr);
+                if (!isNaN(scaleValue) && scaleValue !== 0.0 && scaleValue !== 1.0) {
+                  if (msh3js.debug) console.log(`processOptionFiles::-scale rule found with value: ${scaleValue}. Applying to ${mshData.fileName}.`);
+                  mshData.group.scale.set(scaleValue, scaleValue, scaleValue);
+                  // Skip the next part since it's the scale value
+                  i++;
+                } else if (msh3js.debug) {
+                  console.log(`processOptionFiles::-scale value of ${scaleValue} is ignored.`);
+                }
+              } else if (msh3js.debug) {
+                console.warn(`processOptionFiles::-scale command found but no scale value provided.`);
+              }
             }
           }
         }
