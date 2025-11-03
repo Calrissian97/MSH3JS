@@ -1,16 +1,20 @@
 const CACHE_NAME = "offlineCache-v1"; // Increment version to trigger update
 const URLS_TO_CACHE = [
   "./manifest.json",
-  "./package.json",
   "./index.html",
   "./msh3js.js",
   "./MSHLoader.js",
   "./ViewHelper.js",
+  "./Aurebesh.ttf",
   "https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.module.min.js",
-  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/controls/OrbitControls.js",
-  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/TGALoader.js",
-  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/EXRLoader.js",
-  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/RGBELoader.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/controls/OrbitControls.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/TGALoader.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/EXRLoader.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/loaders/RGBELoader.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/postprocessing/EffectComposer.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/postprocessing/RenderPass.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/postprocessing/UnrealBloomPass.min.js",
+  "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/postprocessing/ShaderPass.min.js",
   "https://cdn.jsdelivr.net/npm/stats-gl/dist/main.min.js",
   "https://cdn.jsdelivr.net/npm/tweakpane/dist/tweakpane.min.js",
   "https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.min.js",
@@ -139,4 +143,3 @@ self.addEventListener("message", (event) => {
     );
   }
 });
-

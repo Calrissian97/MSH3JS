@@ -5,15 +5,15 @@
 
 // Module Imports ------------------------------------------------------
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.min.js";
 import { MSHLoader } from "MSHLoader";
-import { TGALoader } from "three/addons/loaders/TGALoader.js";
-import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
-import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
-import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
-import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { TGALoader } from "three/addons/loaders/TGALoader.min.js";
+import { EXRLoader } from "three/addons/loaders/EXRLoader.min.js";
+import { RGBELoader } from "three/addons/loaders/RGBELoader.min.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.min.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.min.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.min.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.min.js";
 // Note: The following will be imported dynamically instead
 //import { ViewHelper } from "view-helper";
 //import { Pane } from "tweakpane";
