@@ -1,5 +1,5 @@
 "use strict";
-// mshLoader.js - Loads a binary msh file into Three.js
+// MSHLoader.js - Loads a binary msh file into Three.js
 // (c) 2025 by Landon Hull aka Calrissian97
 // This code is licensed under GPL 3.0
 
@@ -26,7 +26,7 @@ export class MSHLoader extends THREE.Loader {
         // Globals for file reading operations.
         this.buffer = null;
         this.byteOffset = null;
-        this.debug = true;
+        this.debug = false;
     }
 
     // Cleans up and resets the loader's state.
@@ -127,6 +127,7 @@ export class MSHLoader extends THREE.Loader {
      * and orchestrates the process of reading chunks, creating THREE.js objects,
      * and assembling the final scene.
      * @param {ArrayBuffer} arrayBuffer - The raw binary data of the .msh file.
+     * @param {string} url - The URL of the file, used for error reporting.
      * @returns {THREE.Group} The fully constructed scene as a THREE.Group.
      */
     parse(arrayBuffer, url) {
@@ -222,6 +223,8 @@ export class MSHLoader extends THREE.Loader {
      * Iterates through the raw material data and creates THREE.MeshPhongMaterial
      * objects, storing them back into the `this.materials` array.
      */
+    // Note: This function creates the THREE.js material instances but does not yet
+    // apply textures. Textures are applied later when they are loaded.
     _constructThreeMaterials() {
         for (let material of this.materials) {
             let transparent = false, specular = false, specColor = null, diffColor = null;
@@ -277,6 +280,10 @@ export class MSHLoader extends THREE.Loader {
      * @param {Set<string>} boneNames - A set of names for objects that should be bones.
      * @returns {Map<string, object>} A map from lowercase model names to the model data object.
      */
+    // This is a major function that iterates through all parsed 'MODL' chunks.
+    // For each model, it decides whether to create a THREE.Bone, THREE.Mesh,
+    // THREE.SkinnedMesh, or a simple THREE.Object3D based on its name and data.
+    // It also constructs the BufferGeometry for any visible meshes.
     _constructSceneObjects(boneNames) {
         const modelsMap = new Map();
 
@@ -306,7 +313,7 @@ export class MSHLoader extends THREE.Loader {
 
             // Infer visibility based on Pandemic Studios' naming conventions.
             if (model.name.toLowerCase().startsWith("p_") || model.name.toLowerCase().startsWith("c_") || model.name.toLowerCase().includes("collision") ||
-                model.name.toLowerCase().includes("lowrez") || model.name.toLowerCase().includes("lowres") || model.name.toLowerCase().endsWith("_lod2") || 
+                model.name.toLowerCase().includes("lowrez") || model.name.toLowerCase().includes("lowres") || model.name.toLowerCase().endsWith("_lod2") ||
                 model.name.toLowerCase().endsWith("_lod3") || model.name.toLowerCase().startsWith("sv_") || model.name.toLowerCase().includes("shadowvolume"))
                 model.modl.flgs = 1;
             // Otherwise override flgs and assign it the visible value (0).
@@ -317,6 +324,8 @@ export class MSHLoader extends THREE.Loader {
             if (model.modl.geom) {
                 let mesh = null;
                 // Create buffer geometry from SEGM chunks
+                // A single model can be composed of multiple geometry segments (SEGM),
+                // each with its own material and vertex data. We merge these into a single BufferGeometry.
                 if (model.modl.geom.segments.length > 0) {
                     // Pre-calculate total sizes for typed arrays
                     let totalVertexCount = 0;
@@ -325,6 +334,7 @@ export class MSHLoader extends THREE.Loader {
                     let hasUVs = false;
                     let hasColors = false;
 
+                    // First, loop through all segments to determine the total size needed for our merged buffers.
                     for (const segment of model.modl.geom.segments) {
                         totalVertexCount += segment.posl.vertexCount;
                         if (segment.nrml.normals) hasNormals = true;
@@ -332,6 +342,7 @@ export class MSHLoader extends THREE.Loader {
                         if (segment.clrl.colors || segment.clrb.color) hasColors = true;
 
                         let segmentIndexCount = 0;
+                        // Triangles from NDXT (standard triangle list)
                         if (segment.ndxt.trianglesCCW) {
                             segmentIndexCount += segment.ndxt.trianglesCCW.length;
                         }
@@ -342,6 +353,7 @@ export class MSHLoader extends THREE.Loader {
                                 }
                             }
                         }
+                        // Triangles from NDXL (polygons, which we triangulate)
                         if (segment.ndxl.polygons) {
                             for (const polygon of segment.ndxl.polygons) {
                                 if (polygon.length >= 3) {
@@ -367,7 +379,7 @@ export class MSHLoader extends THREE.Loader {
                     let uvOffset = 0;
                     let colorOffset = 0;
 
-                    // Loop through segments appending attributes to merged lists.
+                    // Second, loop through segments again, this time copying their data into the merged typed arrays.
                     for (let segment of model.modl.geom.segments) {
                         if (segment.posl.vertices) // If geometry segment has vertices add them.
                             mergedPositions.set(segment.posl.vertices, positionOffset);
@@ -411,12 +423,13 @@ export class MSHLoader extends THREE.Loader {
                                 mergedColors.set(rgba, colorOffset);
                             }
                         }
-                        
+
                         // Keep track of how many indices this segment adds.
                         const startIndexCount = indexOffset;
 
                         // Process indices from NDXT (triangles), STRP (strips), and NDXL (quads/polygons).
                         // Write them directly into the final mergedTris buffer.
+                        // The `vertexOffset` is crucial to ensure indices from one segment don't point to vertices of another.
                         if (segment.ndxt.trianglesCCW) {
                             for (const index of segment.ndxt.trianglesCCW) {
                                 mergedTris[indexOffset++] = index + vertexOffset;
@@ -426,6 +439,7 @@ export class MSHLoader extends THREE.Loader {
                             for (const strip of segment.strp.triangleStrips) {
                                 if (strip.length < 3) continue;
                                 for (let i = 0; i <= strip.length - 3; i++) {
+                                    // De-strip the triangles, respecting the winding order for odd/even triangles.
                                     if (i % 2 === 0) {
                                         mergedTris[indexOffset++] = strip[i] + vertexOffset;
                                         mergedTris[indexOffset++] = strip[i + 1] + vertexOffset;
@@ -442,6 +456,7 @@ export class MSHLoader extends THREE.Loader {
                             for (const polygon of segment.ndxl.polygons) {
                                 if (polygon.length < 3) continue;
                                 const v0 = polygon[0] + vertexOffset;
+                                // Simple fan triangulation for the polygon.
                                 for (let i = 1; i < polygon.length - 1; i++) {
                                     mergedTris[indexOffset++] = v0;
                                     mergedTris[indexOffset++] = polygon[i] + vertexOffset;
@@ -504,6 +519,7 @@ export class MSHLoader extends THREE.Loader {
                     }
 
                     // --- Skinned Mesh (from SEGM buffer geometry) ---
+                    // If the model has an 'envelope' (skinning data), it must be a SkinnedMesh.
                     if (model.modl.geom.envelope && model.modl.geom.envelope.indices) {
                         // The WGHT chunk contains indices that point into the ENVL chunk's list of bone model indices (mndx).
                         // We need to build the final skinIndex and skinWeight attributes by merging all segments.
@@ -512,6 +528,7 @@ export class MSHLoader extends THREE.Loader {
                             totalSkinValues += segment.posl.vertexCount * 4;
                         }
 
+                        // `envlBoneMndx` is the list of bone model indices (mndx) that can influence this mesh.
                         const envlBoneMndx = model.modl.geom.envelope.indices;
                         const finalSkinIndices = new Uint16Array(totalSkinValues);
                         const finalSkinWeights = new Float32Array(totalSkinValues);
@@ -571,6 +588,7 @@ export class MSHLoader extends THREE.Loader {
                 }
 
                 // --- Cloth Mesh (from CLTH chunk) ---
+                // If the model has a 'cloth' chunk, it's a simulated cloth object.
                 else if (model.modl.geom.cloth) {
                     const cloth = model.modl.geom.cloth;
                     const clothGeometry = new THREE.BufferGeometry();
@@ -632,6 +650,8 @@ export class MSHLoader extends THREE.Loader {
      * @param {THREE.Group} scene - The root scene group to add objects to.
      * @param {Map<string, object>} modelsMap - A map of model names to model data.
      */
+    // This function walks through the flat list of models again and uses the 'prnt' (parent)
+    // property to build the correct scene graph hierarchy.
     _assembleSceneHierarchy(scene, modelsMap) {
         for (let model of this.models) {
             if (model.modl.prnt) {
@@ -664,6 +684,9 @@ export class MSHLoader extends THREE.Loader {
      * @param {THREE.Group} scene - The root scene group.
      * @param {Map<string, object>} modelsMap - A map of model names to model data.
      */
+    // After the scene hierarchy is built, this function finds all the bones, creates a
+    // THREE.Skeleton object, and then binds this skeleton to all SkinnedMesh instances.
+    // It also remaps the skinning indices from the file to match the final skeleton's bone order.
     _createAndBindSkeleton(scene, modelsMap) {
         const allBones = this.models
             .filter(m => m.three?.isBone)
@@ -690,6 +713,9 @@ export class MSHLoader extends THREE.Loader {
             for (const model of this.models) {
                 if (model.three.isSkinnedMesh) {
                     // Remap the skinIndex attribute from the initial mndx to the final skeleton bone index.
+                    // The 'skinIndex' attribute was initially populated with the bone's 'mndx' value.
+                    // Now we replace that 'mndx' with the bone's actual index in the final `skeleton.bones` array.
+                    // This is a critical step for skinning to work correctly.
                     const skinIndexAttribute = model.three.geometry.getAttribute('skinIndex');
                     if (skinIndexAttribute) {
                         for (let i = 0; i < skinIndexAttribute.array.length; i++) {
@@ -710,6 +736,9 @@ export class MSHLoader extends THREE.Loader {
      * @param {THREE.Group} scene - The root scene group, used to find bones by name.
      * @returns {Array<THREE.AnimationClip>} An array of created animation clips.
      */
+    // This function converts the raw, unsorted keyframe data from the KFR3 chunk
+    // into a series of THREE.AnimationClip objects that can be played by an
+    // AnimationMixer.
     _createAnimationClips(scene) {
         const animationClips = [];
         for (const anim of this.animations) {
@@ -720,6 +749,7 @@ export class MSHLoader extends THREE.Loader {
                 if (!bone) continue;
 
                 // Filter and sort translation keyframes for the current animation.
+                // The keyframes in the file are for all animations combined, so we must filter by frame range.
                 const relevantTranslations = kf.translations
                     .filter(t => t.frame >= anim.firstFrame && t.frame <= anim.lastFrame)
                     .sort((a, b) => a.frame - b.frame);
@@ -727,6 +757,7 @@ export class MSHLoader extends THREE.Loader {
                 if (relevantTranslations.length > 0) {
                     const posTimes = relevantTranslations.map(t => (t.frame - anim.firstFrame) / anim.fps);
                     const posValues = relevantTranslations.flatMap(t => t.value);
+                    // Create a track for this bone's position.
                     tracks.push(new THREE.VectorKeyframeTrack(`${kf.bone}.position`, posTimes, posValues));
                 }
 
@@ -738,6 +769,7 @@ export class MSHLoader extends THREE.Loader {
                 if (relevantRotations.length > 0) {
                     const rotTimes = relevantRotations.map(r => (r.frame - anim.firstFrame) / anim.fps);
                     const rotValues = relevantRotations.flatMap(r => r.value);
+                    // Create a track for this bone's rotation.
                     tracks.push(new THREE.QuaternionKeyframeTrack(`${kf.bone}.quaternion`, rotTimes, rotValues));
                 }
             }
@@ -758,6 +790,7 @@ export class MSHLoader extends THREE.Loader {
      * @param {THREE.Group} scene - The root scene group.
      * @param {Array<THREE.AnimationClip>} animationClips - The created animation clips.
      */
+    // This final step attaches all the parsed data and created objects to the main scene's `userData` property.
     _populateUserData(scene, animationClips) {
         scene.userData.textures = Array.from(this.textures);
         scene.userData.materials = this.materials;
@@ -773,6 +806,7 @@ export class MSHLoader extends THREE.Loader {
      * Finds and reads the SINF (Scene Info) chunk, which contains metadata
      * like the scene name, frame range, and bounding box.
      */
+    // This function reads the SINF chunk, which is a header for the entire file.
     _readSceneInfo(buffer) {
         // Guess usual offset first
         let sinf = this._findChunk(buffer, "SINF", 16, 20); // Usual offset (stock and zetools)
@@ -838,6 +872,7 @@ export class MSHLoader extends THREE.Loader {
      * Finds and reads the MATL (Material List) chunk, which contains definitions
      * for all materials used in the model in child MATD (Material Data) chunks.
      */
+    // This function reads the MATL chunk, which contains a list of all material definitions (MATD).
     _readMaterials(buffer) {
         // Guess common offsets first
         let matl = this._findChunk(buffer, "MATL", 124, 128); // ZETools export offset
@@ -889,6 +924,7 @@ export class MSHLoader extends THREE.Loader {
             // Specular decay/exponent/shininess
             shininess = this._readFloat32LE(buffer, byteOffset);
             byteOffset += 4;
+            // The ATRB chunk contains rendering flags and other metadata.
             if (this._readString(buffer, byteOffset, 4) === "ATRB") {
                 byteOffset += 8;
                 flags = this._readUint8LE(buffer, byteOffset);
@@ -901,6 +937,7 @@ export class MSHLoader extends THREE.Loader {
                 byteOffset += 1;
                 atrb = {
                     flags,
+                    // The bitFlags determine basic properties like transparency and specularity.
                     renderType,
                     data0,
                     data1,
@@ -914,6 +951,7 @@ export class MSHLoader extends THREE.Loader {
                         additiveTransparent: (flags & 1 << 6) !== 0,
                         specular: (flags & 1 << 7) !== 0,
                     },
+                    // The renderFlags determine the shader/effect to be used (e.g., scrolling, glowing, normal-mapped).
                     renderFlags: {
                         normal: renderType === 0,
                         glow: renderType === 1,
@@ -950,6 +988,7 @@ export class MSHLoader extends THREE.Loader {
                     }
                 };
             }
+            // The TX*D chunks define the texture filenames for different slots (diffuse, normal, etc.).
             if (this._readString(buffer, byteOffset, 4) === "TX0D") {
                 byteOffset += 4;
                 const tx0Length = this._readUint32LE(buffer, byteOffset);
@@ -1011,6 +1050,7 @@ export class MSHLoader extends THREE.Loader {
      * and/or skinning (ENVL) data.
      */
     _readGeometries(buffer) {
+        // Find all MODL chunks in the file. Each one is a node in the scene graph.
         const modlChunks = this._findAllChunks(buffer, "MODL");
         const models = [];
         for (const modl of modlChunks) {
@@ -1093,6 +1133,7 @@ export class MSHLoader extends THREE.Loader {
                 const geomEnd = byteOffset + geomSize;
                 byteOffset += 52; // Skip BBOX
                 geom = { segments: [], cloth: null, envelope: null };
+                // A GEOM chunk can contain SEGM (standard geometry), CLTH (cloth), or ENVL (skinning) chunks.
                 while (byteOffset < geomEnd) {
                     const chunkHeader = this._readString(buffer, byteOffset, 4);
                     if (chunkHeader === "SEGM") {
@@ -1114,6 +1155,7 @@ export class MSHLoader extends THREE.Loader {
                         byteOffset += 4; // Skip SEGM size
                         const segmEnd = byteOffset + segmSize;
                         // While inside this segm chunk...
+                        // Read all the vertex attribute chunks (POSL, NRML, UV0L, etc.).
                         while (byteOffset < segmEnd) {
                             const segmentChild = this._readString(buffer, byteOffset, 4);
                             if (segmentChild === "MATI") {
@@ -1216,7 +1258,9 @@ export class MSHLoader extends THREE.Loader {
                                 // Read the explicit number of indices for this strip chunk.
                                 const numIndices = this._readUint32LE(buffer, byteOffset);
                                 byteOffset += 4;
- 
+                                // Triangle strips are defined by a sequence of vertices. A special flag (0x8000)
+                                // is used to separate one strip from the next within the same chunk.
+
                                 const allRawIndices = new Uint16Array(numIndices);
                                 for (let i = 0; i < numIndices; i++) {
                                     // Safety check to prevent reading past the chunk's declared end.
@@ -1232,6 +1276,7 @@ export class MSHLoader extends THREE.Loader {
                                 if (allRawIndices.length > 0) {
                                     let currentStrip = [];
                                     for (let i = 0; i < allRawIndices.length; i++) {
+                                        // The separator is a pair of indices with the high bit set.
                                         const rawIndex = allRawIndices[i];
                                         // Check if this index is the START of a separator pair.
                                         const isSeparatorStart = (rawIndex & 0x8000) &&
@@ -1245,6 +1290,7 @@ export class MSHLoader extends THREE.Loader {
                                             // Start a new, empty strip.
                                             currentStrip = [];
                                         }
+                                        // The actual vertex index is in the lower 15 bits.
                                         const vertexIndex = rawIndex & 0x7FFF;
                                         currentStrip.push(vertexIndex);
                                     }
@@ -1290,6 +1336,7 @@ export class MSHLoader extends THREE.Loader {
                                 const weightsCount = this._readUint32LE(buffer, byteOffset);
                                 byteOffset += 4;
                                 segm.wght.count = weightsCount;
+                                // This data defines how much influence up to 4 bones have on each vertex.
 
                                 // Each vertex has 4 bone indices and 4 weights.
                                 const boneIndices = new Uint32Array(weightsCount * 4); // Index into ENVL
@@ -1319,6 +1366,7 @@ export class MSHLoader extends THREE.Loader {
                         }
                         geom.segments.push(segm);
                     } else if (chunkHeader === "CLTH") {
+                        // The CLTH chunk defines a cloth object with its own geometry and simulation parameters.
                         let clth = {
                             name: name,
                             ctex: "",
@@ -1403,7 +1451,7 @@ export class MSHLoader extends THREE.Loader {
                                 const fwgtEnd = byteOffset + fwgtSize;
                                 const fwgtCount = this._readUint32LE(buffer, byteOffset);
                                 byteOffset += 4;
-                                clth.fwgt.pointCount = fwgtCount; 
+                                clth.fwgt.pointCount = fwgtCount;
                                 clth.fwgt.boneNames = new Array(fwgtCount);
                                 for (let i = 0; i < fwgtCount; i++) {
                                     if (byteOffset >= fwgtEnd) break;
@@ -1497,6 +1545,7 @@ export class MSHLoader extends THREE.Loader {
                         byteOffset = clothEnd;
                     } else if (chunkHeader === "ENVL") {
                         byteOffset += 4; // Skip ENVL header
+                        // The ENVL chunk lists which bones (by their mndx) can affect this mesh.
                         const envlSize = this._readUint32LE(buffer, byteOffset);
                         byteOffset += 4;
                         const envlEnd = byteOffset + envlSize;
@@ -1542,6 +1591,7 @@ export class MSHLoader extends THREE.Loader {
      * sub-chunks: CYCL (defines the animations like "walk", "run") and
      * KFR3 (contains the actual position/rotation keyframe data for each bone).
      */
+    // This function reads the main animation data block.
     _readAnimations(buffer) {
         let anm2 = this._findChunk(buffer, "ANM2");
         if (!anm2) return null; // Simply return null if not found
@@ -1552,6 +1602,7 @@ export class MSHLoader extends THREE.Loader {
         const cyclEnd = byteOffset + cyclSize;
         const animationCount = this._readUint32LE(buffer, byteOffset);
         byteOffset += 4;
+        // First, read the CYCL chunk to get the list of animation names and their frame ranges.
         for (let i = 0; i < animationCount; i++) {
             if (byteOffset >= cyclEnd) break;
             let animName = this._readString(buffer, byteOffset, 64); // Always 64-byte animation name
@@ -1575,6 +1626,7 @@ export class MSHLoader extends THREE.Loader {
         }
         byteOffset = cyclEnd;
         const keyframes = []; // List of keyframes by bone
+        // Next, read the KFR3 chunk to get the raw keyframe data for all bones.
         byteOffset += 4; // Skip KFR3 chunk header
         const kfr3Size = this._readUint32LE(buffer, byteOffset);
         byteOffset += 4;
@@ -1713,60 +1765,74 @@ export class MSHLoader extends THREE.Loader {
      * from the DataView in little-endian format, with basic safety checks.
      */
     _readUint32LE(buffer, byteOffset) {
-        if (buffer == undefined) buffer = this.buffer;
-        if (byteOffset == undefined) byteOffset = this.byteOffset;
-        try { return buffer.getUint32(byteOffset, true); }
-        catch (error) {
-            console.error("Error reading uint32 at byte byteOffset", byteOffset, ":", error);
+        if (buffer === undefined) buffer = this.buffer;
+        if (byteOffset === undefined) byteOffset = this.byteOffset;
+        if (byteOffset + 4 > buffer.byteLength) {
+            console.error("Error reading uint32: read would go past end of buffer.", { byteOffset, bufferLength: buffer.byteLength });
+            return 0;
         }
+        try { return buffer.getUint32(byteOffset, true); }
+        catch (error) { console.error("Error reading uint32 at byteOffset", byteOffset, ":", error); return 0; }
     }
 
     _readUint16LE(buffer, byteOffset) {
-        if (buffer == undefined) buffer = this.buffer;
-        if (byteOffset == undefined) byteOffset = this.byteOffset;
-        try { return buffer.getUint16(byteOffset, true); }
-        catch (error) {
-            console.error("Error reading uint16 at byte byteOffset", byteOffset, ":", error);
+        if (buffer === undefined) buffer = this.buffer;
+        if (byteOffset === undefined) byteOffset = this.byteOffset;
+        if (byteOffset + 2 > buffer.byteLength) {
+            console.error("Error reading uint16: read would go past end of buffer.", { byteOffset, bufferLength: buffer.byteLength });
+            return 0;
         }
+        try { return buffer.getUint16(byteOffset, true); }
+        catch (error) { console.error("Error reading uint16 at byteOffset", byteOffset, ":", error); return 0; }
     }
 
     _readUint8LE(buffer, byteOffset) {
-        if (buffer == undefined) buffer = this.buffer;
-        if (byteOffset == undefined) byteOffset = this.byteOffset;
-        try { return buffer.getUint8(byteOffset, true); }
-        catch (error) {
-            console.error("Error reading uint8 at byte byteOffset", byteOffset, ":", error);
+        if (buffer === undefined) buffer = this.buffer;
+        if (byteOffset === undefined) byteOffset = this.byteOffset;
+        if (byteOffset + 1 > buffer.byteLength) {
+            console.error("Error reading uint8: read would go past end of buffer.", { byteOffset, bufferLength: buffer.byteLength });
+            return 0;
         }
+        try { return buffer.getUint8(byteOffset, true); }
+        catch (error) { console.error("Error reading uint8 at byteOffset", byteOffset, ":", error); return 0; }
     }
 
     _readFloat32LE(buffer, byteOffset) {
-        if (buffer == undefined) buffer = this.buffer;
-        if (byteOffset == undefined) byteOffset = this.byteOffset;
-        try { return buffer.getFloat32(byteOffset, true); }
-        catch (error) {
-            console.error("Error reading float32 at byte byteOffset", byteOffset, ":", error);
+        if (buffer === undefined) buffer = this.buffer;
+        if (byteOffset === undefined) byteOffset = this.byteOffset;
+        if (byteOffset + 4 > buffer.byteLength) {
+            console.error("Error reading float32: read would go past end of buffer.", { byteOffset, bufferLength: buffer.byteLength });
+            return 0.0;
         }
+        try { return buffer.getFloat32(byteOffset, true); }
+        catch (error) { console.error("Error reading float32 at byteOffset", byteOffset, ":", error); return 0.0; }
     }
 
     _readString(buffer, byteOffset, length) {
-        if (buffer == undefined) buffer = this.buffer;
-        if (byteOffset == undefined) byteOffset = this.byteOffset;
-        if (typeof (length) === "number" && length > 0 && byteOffset + length < buffer.byteLength) {
-            try {
-                let str = "";
-                for (let i = 0; i < length; i++)
-                    str += String.fromCharCode(buffer.getUint8(byteOffset + i));
-                // Remove null terminators
-                return str.replace(/\0/g, "");
-            } catch (error) {
-                console.error("Error reading string of length", length, "at byte byteOffset", byteOffset, ":", error);
-                return "";
-            }
+        if (buffer === undefined) buffer = this.buffer;
+        if (byteOffset === undefined) byteOffset = this.byteOffset;
+        if (typeof length !== 'number' || length <= 0) {
+            return '';
+        }
+        // Boundary check: ensure the read operation is within the buffer's limits.
+        if (byteOffset + length > buffer.byteLength) {
+            console.error("Error reading string: read would go past end of buffer.", { byteOffset, length, bufferLength: buffer.byteLength });
+            return "";
+        }
+        try {
+            // Use TextDecoder for efficient string decoding.
+            const stringBuffer = new Uint8Array(buffer.buffer, buffer.byteOffset + byteOffset, length);
+            const str = new TextDecoder().decode(stringBuffer);
+            // Remove null terminators, which are common in this format.
+            return str.replace(/\0/g, "");
+        } catch (error) {
+            console.error("Error reading string of length", length, "at byteOffset", byteOffset, ":", error);
+            return "";
         }
     }
 
     /**
-     * CRC32 tables and logic ported from http://schlechtwetterfront.github.io/ze_filetypes/index.html
+     * CRC32 tables and logic ported for js from http://schlechtwetterfront.github.io/ze_filetypes/index.html
      * Calculates the CRC32 hash of a lowercase string. This is used to match
      * bone names to the CRC values stored in the animation data.
      */

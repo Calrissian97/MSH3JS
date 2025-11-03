@@ -19,11 +19,13 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 //import { Pane } from "tweakpane";
 //import Stats from "stats-gl";
 //import "webgl-lint";
+//import { MeshBVH } from "three-mesh-bvh";
+
 
 // Global app object/namespace for application state and data
 const msh3js = {
   // Debugging flag
-  debug: true,
+  debug: false,
   // App options
   options: {
     controlDamping: true, // orbitControls damping
@@ -164,7 +166,7 @@ const msh3js = {
   pane: null,
   // App size
   size: null,
-  // App listener flags
+  // App listeners
   _listeners: {
     fileDrop: null,
     fileInput: null,
@@ -532,7 +534,7 @@ const msh3js = {
     // Either get canvas from param or from HTML or create a new one inside appContainer
     // Assign directly to msh3js.canvas
     msh3js.canvas = canvas ?? document.getElementById("msh3jsCanvas") ?? appContainer.querySelector("canvas") ??
-      msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height }, true);
+      msh3js.createCanvas({ id: "msh3jsCanvas", width: 1, height: 1 }, true);
 
     // Get/create tweakpane panel container (div)
     let tweakpaneContainer = null;
@@ -871,7 +873,7 @@ const msh3js = {
           materialFolder.addBinding(material.three, "wireframe", { label: "Wireframe" });
 
           if (material.matd?.atrb) {
-            const atrbFolder = materialFolder.addFolder({ title: "Attributes", expanded: false });
+            const atrbFolder = materialFolder.addFolder({ title: "Attributes", expanded: true });
             const renderTypeName = Object.keys(material.matd.atrb.renderFlags).find(key => material.matd.atrb.renderFlags[key]) || 'unknown';
             atrbFolder.addBinding(material.matd.atrb, 'renderType', { readonly: true, label: "Render Type", format: (v) => `${v} (${renderTypeName})` });
 
@@ -893,7 +895,7 @@ const msh3js = {
           };
 
           if (Object.values(textureSlots).some(name => name !== 'Unassigned')) {
-            const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: false });
+            const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: true });
             for (const [label, textureName] of Object.entries(textureSlots)) {
               if (textureName !== 'Unassigned') {
                 texturesFolder.addBinding({ [label]: textureName }, label, { label, readonly: true });
@@ -1192,7 +1194,7 @@ const msh3js = {
 
     const xrFolder = threeTab.addFolder({
       title: "WebXR",
-      expanded: msh3js._supportedFeatures.xr.supported && 
+      expanded: msh3js._supportedFeatures.xr.supported &&
         (msh3js._supportedFeatures.xr.vr || msh3js._supportedFeatures.xr.ar),
     });
 
@@ -2943,7 +2945,8 @@ const msh3js = {
         newCanvas.height
       );
     if (inject === true) {
-      msh3js._appContainer.appendChild(newCanvas);
+      const container = msh3js._appContainer ?? document.body;
+      container.appendChild(newCanvas);
       if (msh3js.debug)
         console.log("createCanvas::Canvas injected into _appContainer.");
     }
@@ -3091,7 +3094,7 @@ const msh3js = {
         const shadowCam = msh3js.three.dirLight.shadow.camera;
 
         shadowCam.near = 0.1;
-        shadowCam.far = shadowRadius * 4 + distance; // Ensure far plane covers the camera distance
+        shadowCam.far = shadowRadius * 4;
         shadowCam.left = -shadowRadius * 1.5;
         shadowCam.right = shadowRadius * 1.5;
         shadowCam.top = shadowRadius * 1.5;
