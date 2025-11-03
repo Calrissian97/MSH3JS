@@ -136,6 +136,10 @@ const msh3js = {
     xrSession: null,
     xrSessionMode: null,
     preXRBloom: null,
+    preXRBackground: null,
+    xrHitTestSource: null,
+    xrReticle: null,
+    xrModelPlaced: false,
   },
   // Proxy object(s) for tweakpane to decouple from three
   ui: {
@@ -1610,6 +1614,10 @@ const msh3js = {
   // Main render function
   async render(time) {
     const elapsedTime = (time - (msh3js.renderTime || time)) / 1000.0;
+
+    // Handle AR hit-testing
+    if (msh3js.three.xrSessionMode === 'immersive-ar') msh3js.handleARHitTest();
+
     // If there's a mixer, update it. The speed is handled by mixer.timeScale.
     if (msh3js.three.mixer) msh3js.three.mixer.update(elapsedTime);
 
@@ -4334,6 +4342,15 @@ const msh3js = {
       domOverlay: { root: msh3js._tweakpaneContainer }
     };
 
+    // For AR, we want a transparent background to see the camera feed.
+    if (sessionMode === 'immersive-ar') {
+      // Store the current background to restore it later.
+      msh3js.three.preXRBackground = msh3js.three.scene.background;
+      msh3js.three.scene.background = null;
+      // Initially, the model is not placed.
+      msh3js.three.xrModelPlaced = false;
+    }
+
     // --- Reposition the scene for XR ---
     // Get the center of the scene's content.
     const sceneBounds = msh3js.three.sceneBounds;
@@ -4372,6 +4389,38 @@ const msh3js = {
         camera.updateProjectionMatrix();
       }
 
+      // --- AR Hit-Test and Reticle Setup ---
+      if (sessionMode === 'immersive-ar') {
+        // Create a reticle to show the hit-test point
+        const reticleGeometry = new THREE.RingGeometry(0.05, 0.07, 32).rotateX(-Math.PI / 2);
+        const reticleMaterial = new THREE.MeshBasicMaterial();
+        msh3js.three.xrReticle = new THREE.Mesh(reticleGeometry, reticleMaterial);
+        msh3js.three.xrReticle.matrixAutoUpdate = false;
+        msh3js.three.xrReticle.visible = false;
+        msh3js.three.scene.add(msh3js.three.xrReticle);
+
+        // Request a hit-test source
+        const viewerSpace = await session.requestReferenceSpace('viewer');
+        msh3js.three.xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+        // Add a 'select' event listener for placing the model
+        session.addEventListener('select', () => {
+          if (msh3js.three.xrReticle.visible) {
+            // Get the reticle's position and apply it to all loaded MSH groups.
+            const placementPosition = new THREE.Vector3().setFromMatrixPosition(msh3js.three.xrReticle.matrix);
+            msh3js.three.msh.forEach(msh => {
+              msh.group.position.copy(placementPosition);
+            });
+            msh3js.three.xrModelPlaced = true;
+            // Optionally, you could hide the reticle after placing the model.
+            // msh3js.three.xrReticle.visible = false;
+          }
+        });
+
+        // Hide the main model group until it's placed by the user.
+        msh3js.three.msh.forEach(msh => msh.group.visible = false);
+      }
+
       session.addEventListener('end', () => {
         // When the XR session ends, we must clean up and restore the non-XR rendering state.
 
@@ -4379,11 +4428,27 @@ const msh3js = {
         msh3js.three.msh.forEach(msh => {
           msh.group.position.set(0, 0, 0);
         });
+        // Restore scene background
+        if (msh3js.three.preXRBackground) {
+          msh3js.three.scene.background = msh3js.three.preXRBackground;
+          msh3js.three.preXRBackground = null;
+        }
 
         msh3js.three.xrSession = null;
         msh3js.three.xrSessionMode = null;
         msh3js.three.renderer.xr.enabled = false;
 
+        // Clean up AR-specific objects
+        if (msh3js.three.xrHitTestSource) {
+          msh3js.three.xrHitTestSource.cancel();
+          msh3js.three.xrHitTestSource = null;
+        }
+        if (msh3js.three.xrReticle) {
+          msh3js.three.scene.remove(msh3js.three.xrReticle);
+          msh3js.three.xrReticle.geometry.dispose();
+          msh3js.three.xrReticle.material.dispose();
+          msh3js.three.xrReticle = null;
+        }
         // The camera's state (especially projection matrix) is altered by the XR session.
         // The most reliable way to restore it is to create a new one.
         msh3js.createCamera();
@@ -4413,6 +4478,32 @@ const msh3js = {
         await msh3js.three.xrSession.end(); // This will trigger the 'end' event listener.
       } catch (error) {
         console.error("endXR::Failed to end XR session:", error);
+      }
+    }
+  },
+
+  // Handles AR hit-testing for each frame.
+  handleARHitTest() {
+    if (msh3js.three.xrHitTestSource && msh3js.three.xrReticle) {
+      const frame = msh3js.three.renderer.xr.getFrame();
+      if (frame) {
+        const hitTestResults = frame.getHitTestResults(msh3js.three.xrHitTestSource);
+        if (hitTestResults.length > 0) {
+          const hit = hitTestResults[0];
+          const referenceSpace = msh3js.three.renderer.xr.getReferenceSpace();
+          const hitPose = hit.getPose(referenceSpace);
+
+          msh3js.three.xrReticle.visible = true;
+          msh3js.three.xrReticle.matrix.fromArray(hitPose.transform.matrix);
+
+          // If the model hasn't been placed yet, make it follow the reticle.
+          if (!msh3js.three.xrModelPlaced) {
+            msh3js.three.msh.forEach(msh => msh.group.position.setFromMatrixPosition(msh3js.three.xrReticle.matrix));
+            msh3js.three.msh.forEach(msh => msh.group.visible = true);
+          }
+        } else {
+          msh3js.three.xrReticle.visible = false;
+        }
       }
     }
   },
