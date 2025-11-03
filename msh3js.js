@@ -876,7 +876,7 @@ const msh3js = {
             atrbFolder.addBinding(material.matd.atrb, 'renderType', { readonly: true, label: "Render Type", format: (v) => `${v} (${renderTypeName})` });
 
             const renderType = material.matd.atrb.renderType;
-            if ([3, 7, 11, 25].includes(renderType)) {
+            if ([3, 7, 11, 24, 25, 29].includes(renderType)) {
               atrbFolder.addBinding(material.matd.atrb, 'data0', { readonly: true, label: "Data 0" });
               atrbFolder.addBinding(material.matd.atrb, 'data1', { readonly: true, label: "Data 1" });
             }
@@ -2482,14 +2482,18 @@ const msh3js = {
           material.three.bumpMap = threeTexture;
           material.three.bumpScale = 0.05;
         } else {
+          threeTexture.colorSpace = THREE.LinearSRGBColorSpace;
+          if (material.matd.atrb.renderFlags.bumpmapTiled || material.matd.atrb.renderFlags.bumpmapTiledAndDetailmapAndEnvmap) {
+            const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
+            const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
+            threeTexture.repeat.set(scaleU, scaleV);
+          }
           if (msh3js.isTextureGrayscale(threeTexture)) {
             if (msh3js.debug) console.log('processMaterial::Texture detected as bump map (grayscale).');
-            threeTexture.colorSpace = THREE.LinearSRGBColorSpace;
             material.three.bumpMap = threeTexture;
             material.three.bumpScale = 0.1;
           } else {
             if (msh3js.debug) console.log('processMaterial::Texture detected as normal map (color).');
-            threeTexture.colorSpace = THREE.LinearSRGBColorSpace;
             threeTexture.anisotropy = msh3js.options.anisotropicFiltering;
             material.three.normalMap = threeTexture;
             material.three.normalMap.needsUpdate = true;
@@ -2502,13 +2506,13 @@ const msh3js = {
         if (msh3js.debug) console.log('processMaterial::Detail/Lightmap texture found for material:', material.name);
         const detailTexture = threeTexture.clone();
         detailTexture.colorSpace = THREE.LinearSRGBColorSpace;
-        detailTexture.wrapS = THREE.RepeatWrapping;
-        detailTexture.wrapT = THREE.RepeatWrapping;
-        if (material.matd.atrb) {
+        if (!material.matd.atrb.renderFlags.bumpmapTiledAndDetailmapAndEnvmap && !material.matd.atrb.renderFlags.bumpmapTiled) {
           const scaleU = material.matd.atrb.data0 > 0 ? material.matd.atrb.data0 : 1;
           const scaleV = material.matd.atrb.data1 > 0 ? material.matd.atrb.data1 : 1;
           detailTexture.repeat.set(scaleU, scaleV);
         }
+        detailTexture.anisotropy = msh3js.options.anisotropicFiltering;
+        detailTexture.needsUpdate = true;
         material.three.lightMap = detailTexture;
         material.three.lightMapIntensity = 2.0;
         msh.textures.push(detailTexture);

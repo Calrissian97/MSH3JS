@@ -923,28 +923,28 @@ export class MSHLoader extends THREE.Loader {
                         glossmap: renderType === 5,
                         chrome: renderType === 6,
                         animated: renderType === 7,
-                        ice: renderType === 8, //deprecated
-                        sky: renderType === 9, //deprecated
-                        water: renderType === 10, //deprecated
+                        ice: renderType === 8, // deprecated
+                        sky: renderType === 9, // deprecated
+                        water: renderType === 10, // deprecated
                         detail: renderType === 11,
-                        scroll2: renderType === 12, //deprecated
-                        rotate: renderType === 13, //deprecated
-                        glowRotate: renderType === 14, //deprecated
-                        planarReflection: renderType === 15, //deprecated
+                        scroll2: renderType === 12, // deprecated
+                        rotate: renderType === 13, // deprecated
+                        glowRotate: renderType === 14, // deprecated
+                        planarReflection: renderType === 15, // deprecated
                         glowScroll: renderType === 16,
-                        glowScroll2: renderType === 17, //deprecated
-                        curvedReflection: renderType === 18, //deprecated
-                        normalMapFade: renderType === 19, //unsupported
-                        normalMapInvFade: renderType === 20, //unsupported
-                        iceReflection: renderType === 21, //deprecated
+                        glowScroll2: renderType === 17, // deprecated
+                        curvedReflection: renderType === 18, // deprecated
+                        normalMapFade: renderType === 19, // unsupported/deprecated?
+                        normalMapInvFade: renderType === 20, // unsupported/deprecated?
+                        iceReflection: renderType === 21, // deprecated
                         refracted: renderType === 22,
                         emboss: renderType === 23,
-                        wireframe: renderType === 24,
+                        bumpmapTiled: renderType === 24, // was wireframe
                         pulsate: renderType === 25,
-                        afterburner: renderType === 26, //deprecated
+                        bumpmapAndDetailmapAndEnvmap: renderType === 26, // was afterburner
                         bumpmap: renderType === 27,
                         bumpmapAndGlossmap: renderType === 28,
-                        bumpmapAndDetailmapAndEnvmap: renderType === 29,
+                        bumpmapTiledAndDetailmapAndEnvmap: renderType === 29,
                         multistate: renderType === 30, //deprecated
                         shield: renderType === 31, //deprecated
                     }
