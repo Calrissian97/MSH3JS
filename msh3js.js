@@ -132,6 +132,10 @@ const msh3js = {
     materialsToRestore: {},
     // Scene bounds
     sceneBounds: null,
+    // WebXR session
+    xrSession: null,
+    xrSessionMode: null,
+    preXRBloom: null,
   },
   // Proxy object(s) for tweakpane to decouple from three
   ui: {
@@ -200,6 +204,7 @@ const msh3js = {
     localStorage: false, // LocalStorage support flag
     persistentStorage: false, // PersistentStorage support flag
     serviceWorker: false, // ServiceWorker support flag
+    xr: { supported: false, ar: false, vr: false }, // XR support flags
   },
   // Reverse depth buffer flag (for large geometries)
   _useReverseDepth: false,
@@ -230,7 +235,7 @@ const msh3js = {
     // Update options object from localStorage (User preferences)
     if (msh3js._supportedFeatures.localStorage) {
       try {
-        msh3jsOptions = localStorage.getItem("msh3js_options");
+        msh3jsOptions = window.localStorage.getItem("msh3js_options");
         if (msh3jsOptions) {
           Object.assign(msh3js.options, JSON.parse(msh3jsOptions));
           if (msh3js.debug) console.log("initApp::msh3js_options object loaded from localStorage.");
@@ -362,15 +367,27 @@ const msh3js = {
     if (msh3js.debug) console.log("initApp::appSize:", msh3js.size.width, "x", msh3js.size.height);
 
     // Register service worker to serve app content offline, save/clear user preferences
-    if ("serviceWorker" in navigator) {
+    if (window.navigator.serviceWorker) {
       try {
-        const registration = await navigator.serviceWorker.register("./sw.js");
+        const registration = await window.navigator.serviceWorker.register("./sw.js");
         // Store registration status
         msh3js._serviceWorker = registration.active ?? registration.waiting ?? registration.installing;
         // Set supportedFeatures value if service worker is enabled
         msh3js._supportedFeatures.serviceWorker = !!msh3js._serviceWorker;
         msh3js.manageListeners("add", "serviceWorker");
       } catch (e) { console.error("initApp::Service Worker registration failed:", e); }
+    }
+
+    // Check for webXR support
+    if (window.navigator.xr) {
+      msh3js._supportedFeatures.xr.supported = true
+      // VR support
+      msh3js._supportedFeatures.xr.vr = await window.navigator.xr.isSessionSupported("immersive-vr");
+      // AR support
+      msh3js._supportedFeatures.xr.ar = await window.navigator.xr.isSessionSupported("immersive-ar");
+      if (msh3js.debug) console.log("initApp::WebXR supported:", msh3js._supportedFeatures.xr);
+    } else {
+      if (msh3js.debug) console.log("initApp::WebXR not supported.");
     }
 
     // Get supported graphics features
@@ -1159,29 +1176,46 @@ const msh3js = {
 
     const xrFolder = threeTab.addFolder({
       title: "WebXR",
-      expanded: false,
+      expanded: msh3js._supportedFeatures.xr.supported && 
+        (msh3js._supportedFeatures.xr.vr || msh3js._supportedFeatures.xr.ar),
     });
+
+    const arSupport = msh3js._supportedFeatures.xr.ar;
+    const vrSupport = msh3js._supportedFeatures.xr.vr;
 
     const arControl = xrFolder.addBinding(msh3js.options, "AR", {
       label: "AR",
-    }).on("change", () => {
-      //if (msh3js.options.AR) msh3js.initAR();
-      //else msh3js.resetAR();
+      disabled: !arSupport,
+    }).on("change", (ev) => {
+      if (ev.value) {
+        msh3js.three.preXRBloom = msh3js.options.bloomEnabled;
+        msh3js.options.bloomEnabled = false;
+        vrControl.disabled = true;
+        msh3js.startXR('immersive-ar');
+      } else {
+        msh3js.stopXR();
+        vrControl.disabled = false;
+        msh3js.options.bloomEnabled = msh3js.three.preXRBloom;
+      }
       if (msh3js.debug) console.log("tweakpane::AR set to:", msh3js.options.AR ? "on" : "off");
     });
-    // While testing, disable
-    arControl.disabled = true;
 
     const vrControl = xrFolder.addBinding(msh3js.options, "VR", {
       label: "VR",
-    }).on("change", () => {
-      //if (msh3js.options.VR) msh3js.initVR();
-      //else msh3js.resetVR();
-      if (msh3js.debug)
-        console.log("tweakpane::VR set to:", msh3js.options.VR ? "on" : "off");
+      disabled: !vrSupport,
+    }).on("change", (ev) => {
+      if (ev.value) {
+        msh3js.three.preXRBloom = msh3js.options.bloomEnabled;
+        msh3js.options.bloomEnabled = false;
+        arControl.disabled = true;
+        msh3js.startXR('immersive-vr');
+      } else {
+        msh3js.stopXR();
+        arControl.disabled = false;
+        msh3js.options.bloomEnabled = msh3js.three.preXRBloom;
+      }
+      if (msh3js.debug) console.log("tweakpane::VR set to:", msh3js.options.VR ? "on" : "off");
     });
-    // While testing, disable
-    vrControl.disabled = true;
 
     // --- Anim Tab ---
     // Animation list
@@ -2687,6 +2721,21 @@ const msh3js = {
       return null;
     }
 
+    // Dispose of existing composers and passes to prevent resource leaks
+    if (msh3js.three.composer) {
+      msh3js.three.composer.dispose();
+      msh3js.three.composer = null;
+    }
+    if (msh3js.three.bloomComposer) {
+      msh3js.three.bloomComposer.dispose();
+      msh3js.three.bloomComposer = null;
+    }
+    // Passes are disposed of by their parent composer, but we nullify the references.
+    msh3js.three.renderPass = null;
+    msh3js.three.bloomPass = null;
+    if (msh3js.debug) console.log("createComposer::Disposed of old composers.");
+
+
     // Shaders for selective bloom post-processing
     const vertexShader = `
       varying vec2 vUv;
@@ -4123,12 +4172,12 @@ const msh3js = {
               window.location.reload();
             }
           };
-          navigator.serviceWorker.addEventListener('message', handler);
+          window.navigator.serviceWorker.addEventListener('message', handler);
           msh3js._listeners.serviceWorker = handler;
         }
       } else if (action === "remove") {
         if (msh3js._listeners.serviceWorker) {
-          navigator.serviceWorker.removeEventListener('message', msh3js._listeners.serviceWorker);
+          window.navigator.serviceWorker.removeEventListener('message', msh3js._listeners.serviceWorker);
           msh3js._listeners.serviceWorker = null;
         }
       }
@@ -4261,6 +4310,111 @@ const msh3js = {
         }
       }
     } else { console.warn("manageListeners::Unknown group:", group); }
+  },
+
+  // --- WebXR Session Handlers ---
+  async startXR(sessionMode) {
+    if (!msh3js.three.renderer || !msh3js._supportedFeatures.xr.supported) {
+      console.error("startXR:: XR is not available or renderer is not initialized.");
+      return;
+    }
+
+    if (msh3js.three.xrSession) {
+      console.warn("startXR:: An XR session is already active.");
+      return;
+    }
+
+    const sessionInit = {
+      optionalFeatures: [
+        'local-floor',
+        'bounded-floor',
+        'hit-test',
+        'dom-overlay'
+      ],
+      domOverlay: { root: msh3js._tweakpaneContainer }
+    };
+
+    // --- Reposition the scene for XR ---
+    // Get the center of the scene's content.
+    const sceneBounds = msh3js.three.sceneBounds;
+    if (!sceneBounds.isEmpty()) {
+      const sceneCenter = sceneBounds.getCenter(new THREE.Vector3());
+      const sceneRadius = sceneBounds.getBoundingSphere(new THREE.Sphere()).radius;
+
+      // Calculate an offset to move the scene in front of the user.
+      // We'll place it along the Z-axis, at a distance based on its size.
+      const offset = new THREE.Vector3(
+        -sceneCenter.x,
+        -sceneCenter.y, // You might adjust this if you want the model on the floor.
+        -sceneCenter.z - sceneRadius * 1.0 // Place it 1.5x its radius away.
+      );
+
+      // Apply this offset to all loaded MSH groups.
+      msh3js.three.msh.forEach(msh => msh.group.position.add(offset));
+    }
+
+    try {
+      msh3js.three.renderer.xr.enabled = true;
+      const session = await window.navigator.xr.requestSession(sessionMode, sessionInit);
+      msh3js.three.renderer.xr.setReferenceSpaceType('local-floor');
+      await msh3js.three.renderer.xr.setSession(session);
+      msh3js.three.xrSession = session;
+      msh3js.three.xrSessionMode = sessionMode;
+
+      // --- Fix for XR Depth Fighting (Z-Fighting) ---
+      // The XR session uses an ArrayCamera (one camera per eye). We must update the
+      // clipping planes on each individual eye camera to improve depth precision.
+      const xrCameraArray = msh3js.three.renderer.xr.getCamera();
+      const sceneRadius = msh3js.three.sceneBounds.getBoundingSphere(new THREE.Sphere()).radius;
+      for (const camera of xrCameraArray.cameras) {
+        camera.near = 0.1; // A small near plane is good for VR/AR.
+        camera.far = sceneRadius * 4; // Tightly fit the far plane to the scene's size.
+        camera.updateProjectionMatrix();
+      }
+
+      session.addEventListener('end', () => {
+        // When the XR session ends, we must clean up and restore the non-XR rendering state.
+
+        // Reset the position of all MSH groups to their original state.
+        msh3js.three.msh.forEach(msh => {
+          msh.group.position.set(0, 0, 0);
+        });
+
+        msh3js.three.xrSession = null;
+        msh3js.three.xrSessionMode = null;
+        msh3js.three.renderer.xr.enabled = false;
+
+        // The camera's state (especially projection matrix) is altered by the XR session.
+        // The most reliable way to restore it is to create a new one.
+        msh3js.createCamera();
+        msh3js.createOrbitControls(); // OrbitControls must be re-linked to the new camera.
+
+        // The EffectComposer holds a reference to the old camera. It must also be recreated.
+        if (msh3js.three.composer) msh3js.createComposer();
+
+        // CRITICAL: Resize the renderer and update camera aspect ratio for the main canvas.
+        msh3js.resize();
+
+        // Restart the original animation loop.
+        msh3js.three.renderer.setAnimationLoop(msh3js.render);
+        if (msh3js.debug) console.log("startXR::XR session ended.");
+      });
+
+      if (msh3js.debug) console.log(`startXR::Started ${sessionMode} session.`);
+    } catch (error) {
+      msh3js.three.renderer.xr.enabled = false;
+      console.error(`startXR::Failed to start ${sessionMode} session:`, error);
+    }
+  },
+
+  async stopXR() {
+    if (msh3js.three.xrSession) {
+      try {
+        await msh3js.three.xrSession.end(); // This will trigger the 'end' event listener.
+      } catch (error) {
+        console.error("endXR::Failed to end XR session:", error);
+      }
+    }
   },
 
   // Prevents default drag behavior when dragging files over canvas
