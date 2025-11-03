@@ -35,36 +35,42 @@
       "src": "./screenshots/mshTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
+      "form_factor": "wide",
       "label": "MSH Tab: View msh-related data and manipulate mesh and material attributes."
     },
     {
       "src": "./screenshots/animTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
+      "form_factor": "wide",
       "label": "Anim Tab: Import and play animations"
     },
     {
       "src": "./screenshots/appTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
+      "form_factor": "wide",
       "label": "App Tab: Adjust app settings for controls, rendering, preferences."
     },
     {
       "src": "./screenshots/threeTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
+      "form_factor": "wide",
       "label": "Three Tab: Adjust Three.js parameters, cloth simulation settings."
     },
     {
       "src": "./screenshots/sceneTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
+      "form_factor": "wide",
       "label": "Scene Tab: Manipulate scene lights, helpers, and background"
     },
     {
       "src": "./screenshots/materials.png",
       "sizes": "1920x1080",
       "type": "image/png",
+      "form_factor": "wide",
       "label": "Allows for viewing material properties of msh files."
     }
   ],
