@@ -7,6 +7,7 @@
   "lang": "en",
   "background_color": "#000000",
   "theme_color": "#663399",
+  "orientation": "any",
   "description": "MSH file viewer PWA via Three.js for models from the original Star Wars Battlefront games.",
   "icons": [
     {
