@@ -35,7 +35,7 @@
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Anim Tab: Import and play animations"
+      "label": "Anim Tab: Import and play animations."
     },
     {
       "src": "screenshots/appTab.png",
@@ -56,7 +56,7 @@
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
-      "label": "Scene Tab: Manipulate scene lights, helpers, and background"
+      "label": "Scene Tab: Manipulate scene lights, helpers, and background."
     },
     {
       "src": "screenshots/materials.png",
@@ -64,6 +64,41 @@
       "type": "image/png",
       "form_factor": "wide",
       "label": "Allows for viewing material properties of msh files."
+    },
+    {
+      "src": "screenshots/animTab-mobile.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Anim Tab: Import and play animations."
+    },
+    {
+      "src": "screenshots/sceneTab-mobile.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Scene Tab: Manipulate scene lights, helpers, and background."
+    },
+    {
+      "src": "screenshots/threeTab-mobile.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Three Tab: Adjust Three.js parameters, cloth simulation settings."
+    },
+    {
+      "src": "screenshots/mshTab-mobile.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "MSH Tab: View msh-related data and manipulate mesh and material attributes."
+    },
+    {
+      "src": "screenshots/appTab-mobile.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "App Tab: Adjust app settings for controls, rendering, preferences."
     }
   ],
   "file_handlers": [
