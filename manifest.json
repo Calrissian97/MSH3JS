@@ -5,69 +5,61 @@
   "scope": "./",
   "display": "standalone",
   "lang": "en",
-  "background_color": "rgba(0,0,0,0.0)",
-  "theme_color": "rebeccapurple",
-  "description": "PWA MSH viewer via Three.js for models from the original Star Wars Battlefront games by yours truly, Calrissian97.",
+  "background_color": "#000000",
+  "theme_color": "#663399",
+  "description": "MSH file viewer PWA via Three.js for models from the original Star Wars Battlefront games.",
   "icons": [
+    {
+      "src": "android-chrome-256x256.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "android-chrome-192x192.png",
       "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "android-chrome-128x128.png",
-      "sizes": "128x128",
-      "type": "image/png"
-    },
-    {
-      "src": "favicon-32x32.png",
-      "sizes": "32x32",
-      "type": "image/png"
-    },
-    {
-      "src": "favicon-16x16.png",
-      "sizes": "16x16",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ],
   "screenshots": [
     {
-      "src": "./screenshots/mshTab.png",
+      "src": "screenshots/mshTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
       "label": "MSH Tab: View msh-related data and manipulate mesh and material attributes."
     },
     {
-      "src": "./screenshots/animTab.png",
+      "src": "screenshots/animTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
       "label": "Anim Tab: Import and play animations"
     },
     {
-      "src": "./screenshots/appTab.png",
+      "src": "screenshots/appTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
       "label": "App Tab: Adjust app settings for controls, rendering, preferences."
     },
     {
-      "src": "./screenshots/threeTab.png",
+      "src": "screenshots/threeTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
       "label": "Three Tab: Adjust Three.js parameters, cloth simulation settings."
     },
     {
-      "src": "./screenshots/sceneTab.png",
+      "src": "screenshots/sceneTab.png",
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
       "label": "Scene Tab: Manipulate scene lights, helpers, and background"
     },
     {
-      "src": "./screenshots/materials.png",
+      "src": "screenshots/materials.png",
       "sizes": "1920x1080",
       "type": "image/png",
       "form_factor": "wide",
