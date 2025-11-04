@@ -797,10 +797,10 @@ const msh3js = {
       if (msh3js.three.msh.length > 1) mshFolder.expanded = false;
 
       // MSH Info
-      mshFolder.addBinding(mshData, "fileName", { label: "Filename", readonly: true });
-      mshFolder.addBinding(mshData, "fileSize", { label: "Filesize", readonly: true, format: (v) => `${Math.round(v)} bytes` });
-      mshFolder.addBinding(mshData, "lastModified", { label: "Last Modified", readonly: true, format: (v) => new Date(v).toLocaleString() });
-      mshFolder.addBinding(mshData.sceneInfo, "name", { label: "Scene Name", readonly: true });
+      mshFolder.addBinding(mshData, "fileName", { label: "Filename", readonly: true }).element.title = "The name of the loaded file.";
+      mshFolder.addBinding(mshData, "fileSize", { label: "Filesize", readonly: true, format: (v) => `${Math.round(v)} bytes` }).element.title = "The size of the loaded file in bytes.";
+      mshFolder.addBinding(mshData, "lastModified", { label: "Last Modified", readonly: true, format: (v) => new Date(v).toLocaleString() }).element.title = "The date the file was last modified.";
+      mshFolder.addBinding(mshData.sceneInfo, "name", { label: "Scene Name", readonly: true }).element.title = "The internal scene name from the MSH file.";
 
       // Models Folder
       const modelsInMsh = [];
@@ -818,41 +818,41 @@ const msh3js = {
           if (!model.userData.originalRotation) model.userData.originalRotation = model.rotation.clone();
           if (!model.userData.originalScale) model.userData.originalScale = model.scale.clone();
 
-          modelFolder.addBinding(model, "visible", { label: "Visible" });
+          modelFolder.addBinding(model, "visible", { label: "Visible" }).element.title = "Toggle the visibility of this model.";
 
           if (!model.userData.isCloth) {
             const positionFolder = modelFolder.addFolder({ title: "Position", expanded: false });
-            positionFolder.addBinding(model.position, "x", { min: -100, max: 100, step: 0.1, label: "X" });
-            positionFolder.addBinding(model.position, "y", { min: -100, max: 100, step: 0.1, label: "Y" });
-            positionFolder.addBinding(model.position, "z", { min: -100, max: 100, step: 0.1, label: "Z" });
+            positionFolder.addBinding(model.position, "x", { min: -100, max: 100, step: 0.1, label: "X" }).element.title = "Adjust the model's position on the X-axis.";
+            positionFolder.addBinding(model.position, "y", { min: -100, max: 100, step: 0.1, label: "Y" }).element.title = "Adjust the model's position on the Y-axis.";
+            positionFolder.addBinding(model.position, "z", { min: -100, max: 100, step: 0.1, label: "Z" }).element.title = "Adjust the model's position on the Z-axis.";
             positionFolder.addButton({ title: "Reset" }).on("click", () => {
               if (model.userData.originalPosition) {
                 model.position.copy(model.userData.originalPosition);
                 pane.refresh();
               }
-            });
+            }).element.title = "Reset the model's position to its original value.";
 
             const rotationFolder = modelFolder.addFolder({ title: "Rotation", expanded: false });
-            rotationFolder.addBinding(model.rotation, "x", { min: -Math.PI, max: Math.PI, step: 0.01, label: "X" });
-            rotationFolder.addBinding(model.rotation, "y", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Y" });
-            rotationFolder.addBinding(model.rotation, "z", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Z" });
+            rotationFolder.addBinding(model.rotation, "x", { min: -Math.PI, max: Math.PI, step: 0.01, label: "X" }).element.title = "Adjust the model's rotation on the X-axis (in radians).";
+            rotationFolder.addBinding(model.rotation, "y", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Y" }).element.title = "Adjust the model's rotation on the Y-axis (in radians).";
+            rotationFolder.addBinding(model.rotation, "z", { min: -Math.PI, max: Math.PI, step: 0.01, label: "Z" }).element.title = "Adjust the model's rotation on the Z-axis (in radians).";
             rotationFolder.addButton({ title: "Reset" }).on("click", () => {
               if (model.userData.originalRotation) {
                 model.rotation.copy(model.userData.originalRotation);
                 pane.refresh();
               }
-            });
+            }).element.title = "Reset the model's rotation to its original value.";
 
             const scaleFolder = modelFolder.addFolder({ title: "Scale", expanded: false });
-            scaleFolder.addBinding(model.scale, "x", { min: 0.01, max: 10, step: 0.01, label: "X" });
-            scaleFolder.addBinding(model.scale, "y", { min: 0.01, max: 10, step: 0.01, label: "Y" });
-            scaleFolder.addBinding(model.scale, "z", { min: 0.01, max: 10, step: 0.01, label: "Z" });
+            scaleFolder.addBinding(model.scale, "x", { min: 0.01, max: 10, step: 0.01, label: "X" }).element.title = "Adjust the model's scale on the X-axis.";
+            scaleFolder.addBinding(model.scale, "y", { min: 0.01, max: 10, step: 0.01, label: "Y" }).element.title = "Adjust the model's scale on the Y-axis.";
+            scaleFolder.addBinding(model.scale, "z", { min: 0.01, max: 10, step: 0.01, label: "Z" }).element.title = "Adjust the model's scale on the Z-axis.";
             scaleFolder.addButton({ title: "Reset" }).on("click", () => {
               if (model.userData.originalScale) {
                 model.scale.copy(model.userData.originalScale);
                 pane.refresh();
               }
-            });
+            }).element.title = "Reset the model's scale to its original value.";
           }
 
           if (model.geometry.attributes.color?.count > 0) {
@@ -860,7 +860,7 @@ const msh3js = {
             modelFolder.addBinding(model.userData, "vertexColors", { label: "Vertex Colors" }).on("change", () => {
               const materials = Array.isArray(model.material) ? model.material : [model.material];
               for (let mat of materials) mat.vertexColors = model.userData.vertexColors;
-            });
+            }).element.title = "Enable or disable rendering of per-vertex colors for this model.";
           }
         }
       }
@@ -870,20 +870,20 @@ const msh3js = {
         const mshMaterialsFolder = mshFolder.addFolder({ title: "Materials", expanded: false });
         for (const material of mshData.materials) {
           const materialFolder = mshMaterialsFolder.addFolder({ title: material.name, expanded: false });
-          materialFolder.addBinding(material.three, "wireframe", { label: "Wireframe" });
+          materialFolder.addBinding(material.three, "wireframe", { label: "Wireframe" }).element.title = "Render this material as a wireframe.";
 
           if (material.matd?.atrb) {
             const atrbFolder = materialFolder.addFolder({ title: "Attributes", expanded: true });
             const renderTypeName = Object.keys(material.matd.atrb.renderFlags).find(key => material.matd.atrb.renderFlags[key]) || 'unknown';
-            atrbFolder.addBinding(material.matd.atrb, 'renderType', { readonly: true, label: "Render Type", format: (v) => `${v} (${renderTypeName})` });
+            atrbFolder.addBinding(material.matd.atrb, 'renderType', { readonly: true, label: "Render Type", format: (v) => `${v} (${renderTypeName})` }).element.title = "The rendering mode/shader used by the game engine for this material.";
 
             const renderType = material.matd.atrb.renderType;
             if ([3, 7, 11, 24, 25, 29].includes(renderType)) {
-              atrbFolder.addBinding(material.matd.atrb, 'data0', { readonly: true, label: "Data 0" });
-              atrbFolder.addBinding(material.matd.atrb, 'data1', { readonly: true, label: "Data 1" });
+              atrbFolder.addBinding(material.matd.atrb, 'data0', { readonly: true, label: "Data 0" }).element.title = "Special data value used by certain render types (e.g., for scrolling speed or animation frames).";
+              atrbFolder.addBinding(material.matd.atrb, 'data1', { readonly: true, label: "Data 1" }).element.title = "Special data value used by certain render types (e.g., for scrolling speed or animation frames).";
             }
             for (const [flag, isEnabled] of Object.entries(material.matd.atrb.bitFlags)) {
-              if (isEnabled) atrbFolder.addBinding({ [flag]: isEnabled }, flag, { readonly: true });
+              if (isEnabled) atrbFolder.addBinding({ [flag]: isEnabled }, flag, { readonly: true }).element.title = "Rendering flags from the MSH file.";
             }
           }
 
@@ -898,7 +898,7 @@ const msh3js = {
             const texturesFolder = materialFolder.addFolder({ title: "Textures", expanded: true });
             for (const [label, textureName] of Object.entries(textureSlots)) {
               if (textureName !== 'Unassigned') {
-                texturesFolder.addBinding({ [label]: textureName }, label, { label, readonly: true });
+                texturesFolder.addBinding({ [label]: textureName }, label, { label, readonly: true }).element.title = `Texture file assigned to the ${label} slot.`;
               }
             }
           }
@@ -916,7 +916,7 @@ const msh3js = {
           expanded: true,
         });
         mshMissingTextures.forEach((textureName, index) => {
-          missingTexturesFolder.addBinding({ file: textureName }, 'file', { readonly: true, label: `File ${index + 1}` });
+          missingTexturesFolder.addBinding({ file: textureName }, 'file', { readonly: true, label: `File ${index + 1}` }).element.title = "This texture file is required by the model but was not provided.";
         });
       }
     }
@@ -925,7 +925,7 @@ const msh3js = {
     mshTab.addButton({ title: "Upload" }).on("click", () => {
       msh3js.clickFileInput();
       if (msh3js.debug) console.log("tweakpane::Upload button clicked.");
-    });
+    }).element.title = "Upload new MSH, TGA, or .msh.option files.";
 
     // --- Scene Tab ---
     // Lights Folder on the "Scene" tab.
@@ -947,7 +947,7 @@ const msh3js = {
       msh3js.three.dirLight.color.set(new THREE.Color(msh3js.options.dirLightColor));
       msh3js.three.dirLightHelper.update();
       if (msh3js.debug) console.log("tweakpane::Directional light color set to:", msh3js.options.dirLightColor);
-    });
+    }).element.title = "Set the color of the primary directional light.";
     directionalLight1Folder.addBinding(msh3js.three.dirLight, "intensity", {
       label: "Intensity",
       min: 0,
@@ -955,7 +955,7 @@ const msh3js = {
       step: 0.1,
     }).on("change", () => {
       if (msh3js.debug) console.log("tweakpane::Directional light intensity set to:", msh3js.three.dirLight.intensity);
-    });
+    }).element.title = "Set the intensity (brightness) of the primary directional light.";
     directionalLight1Folder.addBinding(msh3js.options, "dirLightAzimuth", {
       label: "Azimuth",
       min: 0,
@@ -964,7 +964,7 @@ const msh3js = {
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
       if (msh3js.debug) console.log("tweakpane::Directional light azimuth set to:", msh3js.options.dirLightAzimuth);
-    });
+    }).element.title = "Set the horizontal angle (0-360 degrees) of the primary directional light.";
     directionalLight1Folder.addBinding(msh3js.options, "dirLightElevation", {
       label: "Elevation",
       min: -90,
@@ -973,7 +973,7 @@ const msh3js = {
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight, msh3js.options.dirLightAzimuth, msh3js.options.dirLightElevation);
       if (msh3js.debug) console.log("tweakpane::Directional light elevation set to:", msh3js.options.dirLightElevation);
-    });
+    }).element.title = "Set the vertical angle (-90 to 90 degrees) of the primary directional light.";
     directionalLight1Folder
       .addBinding(msh3js.options, "enableDirLightHelper", {
         label: "Show Helper",
@@ -982,7 +982,7 @@ const msh3js = {
         msh3js.three.dirLightHelper.visible =
           msh3js.options.enableDirLightHelper;
         if (msh3js.debug) console.log("tweakpane::Directional light helper set to:", msh3js.options.enableDirLightHelper ? "on" : "off");
-      });
+      }).element.title = "Show or hide a visual helper for the primary directional light.";
 
     const directionalLight2Folder = lightsFolder.addFolder({
       title: "Directional Light 2",
@@ -997,7 +997,7 @@ const msh3js = {
       msh3js.three.dirLight2.color.set(new THREE.Color(msh3js.options.dirLight2Color));
       msh3js.three.dirLightHelper2.update();
       if (msh3js.debug) console.log("tweakpane::Directional light 2 color set to:", msh3js.options.dirLight2Color);
-    });
+    }).element.title = "Set the color of the secondary directional light.";
     directionalLight2Folder.addBinding(msh3js.three.dirLight2, "intensity", {
       label: "Intensity",
       min: 0,
@@ -1005,7 +1005,7 @@ const msh3js = {
       step: 0.1,
     }).on("change", () => {
       if (msh3js.debug) console.log("tweakpane::Directional light 2 intensity set to:", msh3js.three.dirLight2.intensity);
-    });
+    }).element.title = "Set the intensity (brightness) of the secondary directional light.";
     directionalLight2Folder.addBinding(msh3js.options, "dirLight2Azimuth", {
       label: "Azimuth",
       min: 0,
@@ -1014,7 +1014,7 @@ const msh3js = {
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight2, msh3js.options.dirLight2Azimuth, msh3js.options.dirLight2Elevation);
       if (msh3js.debug) console.log("tweakpane::Directional light 2 azimuth set to:", msh3js.options.dirLight2Azimuth);
-    });
+    }).element.title = "Set the horizontal angle (0-360 degrees) of the secondary directional light.";
     directionalLight2Folder.addBinding(msh3js.options, "dirLight2Elevation", {
       label: "Elevation",
       min: -90,
@@ -1023,7 +1023,7 @@ const msh3js = {
     }).on("change", () => {
       msh3js.calculateLightPosition(msh3js.three.dirLight2, msh3js.options.dirLight2Azimuth, msh3js.options.dirLight2Elevation);
       if (msh3js.debug) console.log("tweakpane::Directional light 2 elevation set to:", msh3js.options.dirLight2Elevation);
-    });
+    }).element.title = "Set the vertical angle (-90 to 90 degrees) of the secondary directional light.";
     directionalLight2Folder
       .addBinding(msh3js.options, "enableDirLightHelper2", {
         label: "Show Helper",
@@ -1032,7 +1032,7 @@ const msh3js = {
         msh3js.three.dirLightHelper2.visible =
           msh3js.options.enableDirLightHelper2;
         if (msh3js.debug) console.log("tweakpane::Directional light helper set to:", msh3js.options.enableDirLightHelper2 ? "on" : "off");
-      });
+      }).element.title = "Show or hide a visual helper for the secondary directional light.";
 
     // Ambient Light Folder for global, non-directional lighting.
     const ambientLightFolder = lightsFolder.addFolder({
@@ -1045,7 +1045,7 @@ const msh3js = {
     }).on("change", () => {
       msh3js.three.ambLight.color.set(new THREE.Color(msh3js.options.ambLightColor));
       if (msh3js.debug) console.log("tweakpane::Ambient light color set to:", msh3js.options.ambLightColor);
-    });
+    }).element.title = "Set the color of the global ambient light.";
     ambientLightFolder.addBinding(msh3js.three.ambLight, "intensity", {
       label: "Intensity",
       min: 0,
@@ -1053,7 +1053,7 @@ const msh3js = {
       step: 0.1,
     }).on("change", () => {
       if (msh3js.debug) console.log("tweakpane::Ambient light intensity set to:", msh3js.three.ambLight.intensity);
-    });
+    }).element.title = "Set the intensity (brightness) of the global ambient light.";
 
     // Background Folder for scene background color and image settings.
     const bgFolder = controlsTab.addFolder({
@@ -1066,20 +1066,26 @@ const msh3js = {
         view: "html-color-picker",
       })
       .on("change", () => {
-        // When color is changed, remove any background image
-        msh3js.three.scene.backgroundTexture = null;
-        msh3js.three.scene.background = new THREE.Color(
-          msh3js.options.backgroundColor
-        );
-        if (msh3js.debug) console.log("tweakpane::Background set to color:", msh3js.options.backgroundColor, "and image cleared.");
-      });
+        // When color is changed, dispose of any existing background texture.
+        if (msh3js.three.scene.background && msh3js.three.scene.background.isTexture) {
+          msh3js.three.scene.background.dispose();
+          if (msh3js.debug) console.log("tweakpane::Disposed of old background texture.");
+          // Also clear the environment map and the option value.
+          msh3js.three.scene.environment = null;
+          msh3js.options.backgroundImage = '';
+        }
+
+        // Set the new background color.
+        msh3js.three.scene.background = new THREE.Color(msh3js.options.backgroundColor);
+        if (msh3js.debug) console.log("tweakpane::Background set to color:", msh3js.options.backgroundColor, "and image/environment cleared.");
+      }).element.title = "Set the scene's background color. This will remove any background image.";
 
     // Button to upload a background image.
     bgFolder.addButton({ title: "Upload Background Image" })
       .on("click", () => {
         msh3js.createBackgroundImageInput().click()
         if (msh3js.debug) console.log("tweakpane::Background image upload button clicked.");
-      });
+      }).element.title = "Upload an equirectangular image (.hdr, .exr) or a standard image (.png, .jpg) to use as the scene background and environment map.";
 
     // View Folder for camera and viewport helper controls.
     const viewFolder = controlsTab.addFolder({
@@ -1094,7 +1100,7 @@ const msh3js = {
         msh3js.three.renderer.shadowMap.enabled = msh3js.options.enableShadows;
         msh3js.three.dirLight.castShadow = msh3js.options.enableShadows;
         if (msh3js.debug) console.log("tweakpane::Shadows set to:", msh3js.options.enableShadows ? "on" : "off");
-      });
+      }).element.title = "Enable or disable dynamic shadows cast by the primary directional light.";
 
     // Grid plane visibility toggle.
     viewFolder
@@ -1102,7 +1108,7 @@ const msh3js = {
       .on("change", () => {
         msh3js.three.gridHelper.visible = msh3js.options.enableGrid;
         if (msh3js.debug) console.log("tweakpane::Grid helper set to:", msh3js.three.gridHelper.visible ? "on" : "off");
-      });
+      }).element.title = "Show or hide the ground grid helper.";
 
     // --- Three Tab ---
     // Three.js parameters
@@ -1135,7 +1141,7 @@ const msh3js = {
       if (msh3js.debug) console.log(`tweakpane::Sample count changed from ${currentSampleCount} to closest supported value: ${closestSampleCount}`);
       msh3js.pane.refresh(); // Refresh to show the new default
       await msh3js.recreateRenderer();
-    });
+    }).element.title = "Change the graphics API. This will restart the renderer.";
 
     // Bloom controls
     const hasGlow = msh3js.three.msh.some(msh =>
@@ -1149,16 +1155,16 @@ const msh3js = {
     });
     bloomFolder.addBinding(msh3js.options, "bloomEnabled", { label: "Enabled" }).on("change", () => {
       msh3js.three.bloomPass.enabled = msh3js.options.bloomEnabled;
-    });
+    }).element.title = "Enable or disable the post-processing bloom (glow) effect.";
     bloomFolder.addBinding(msh3js.options, "bloomStrength", { label: "Strength", min: 0, max: 3, step: 0.01 }).on("change", () => {
       if (msh3js.three.bloomPass) msh3js.three.bloomPass.strength = msh3js.options.bloomStrength;
-    });
+    }).element.title = "Set the intensity of the bloom effect.";
     bloomFolder.addBinding(msh3js.options, "bloomRadius", { label: "Radius", min: 0, max: 1, step: 0.01 }).on("change", () => {
       if (msh3js.three.bloomPass) msh3js.three.bloomPass.radius = msh3js.options.bloomRadius;
-    });
+    }).element.title = "Set the radius of the bloom effect.";
     bloomFolder.addBinding(msh3js.options, "bloomThreshold", { label: "Threshold", min: 0, max: 1, step: 0.01 }).on("change", () => {
       if (msh3js.three.bloomPass) msh3js.three.bloomPass.threshold = msh3js.options.bloomThreshold;
-    });
+    }).element.title = "Set the brightness threshold for pixels to be affected by bloom. Lower values include more pixels.";
 
     const hasCloth = msh3js.three.msh.some(msh => msh.hasCloth);
     const clothFolder = threeTab.addFolder({
@@ -1172,7 +1178,7 @@ const msh3js = {
       if (msh3js.options.clothSim) msh3js.initClothSimulations();
       else msh3js.resetClothSimulations();
       if (msh3js.debug) console.log("tweakpane::Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
-    });
+    }).element.title = "Enable or disable the cloth physics simulation for compatible models.";
 
     clothFolder.addBinding(msh3js.options, "clothWindSpeed", {
       label: "Wind Speed",
@@ -1181,7 +1187,7 @@ const msh3js = {
       step: 0.1
     }).on("change", () => {
       if (msh3js.debug) console.log("tweakpane::Cloth wind speed set to:", msh3js.options.clothWindSpeed);
-    });
+    }).element.title = "Set the speed of the wind affecting the cloth simulation.";
 
     clothFolder.addBinding(msh3js.options, "clothWindDirection", {
       label: "Wind Direction",
@@ -1190,7 +1196,7 @@ const msh3js = {
       step: 1
     }).on("change", () => {
       if (msh3js.debug) console.log("tweakpane::Cloth wind direction set to:", msh3js.options.clothWindDirection);
-    });
+    }).element.title = "Set the direction of the wind affecting the cloth simulation.";
 
     const xrFolder = threeTab.addFolder({
       title: "WebXR",
@@ -1216,7 +1222,7 @@ const msh3js = {
         msh3js.options.bloomEnabled = msh3js.three.preXRBloom;
       }
       if (msh3js.debug) console.log("tweakpane::AR set to:", msh3js.options.AR ? "on" : "off");
-    });
+    }).element.title = "Enter Augmented Reality (AR) mode. Requires a compatible device and browser.";
 
     const vrControl = xrFolder.addBinding(msh3js.options, "VR", {
       label: "VR",
@@ -1233,7 +1239,7 @@ const msh3js = {
         msh3js.options.bloomEnabled = msh3js.three.preXRBloom;
       }
       if (msh3js.debug) console.log("tweakpane::VR set to:", msh3js.options.VR ? "on" : "off");
-    });
+    }).element.title = "Enter Virtual Reality (VR) mode. Requires a compatible headset and browser.";
 
     // --- Anim Tab ---
     // Animation list
@@ -1269,19 +1275,21 @@ const msh3js = {
       .on("click", () => {
         msh3js.createAnimationFileInput().click()
         if (msh3js.debug) console.log("tweakpane::Animation import button clicked.");
-      });
+      }).element.title = "Import animations from another MSH file to use with the current model.";
 
     // Add dropdown to select animation, which will be present even if no model is loaded
     const animationDropdown = animationsFolder.addBinding(msh3js.ui, 'currentAnimation', {
       label: 'Current Animation:',
       options: animOptions,
-    }).on('change', (ev) => {
-      // When an animation is selected, play it immediately.
-      if (msh3js.ui.animationPlaying === true)
-        msh3js.playAnimation(ev.value);
+    });
+    animationDropdown.on('change', (ev) => {
+      if (msh3js.ui.animationPlaying === true) {
+        msh3js.playAnimation(ev.value, false);
+      }
       if (msh3js.debug) console.log("tweakpane::Animation changed to:", ev.value);
     });
-    msh3js.ui.animationDropdown = animationDropdown; // Store the reference
+    animationDropdown.element.title = "Select an animation to play.";
+    msh3js.ui.animationDropdown = animationDropdown;
 
     // Add toggle for showing the skeleton
     animationsFolder.addBinding(msh3js.options, 'showSkeleton', {
@@ -1290,7 +1298,7 @@ const msh3js = {
       if (msh3js.three.skeletonHelper)
         msh3js.three.skeletonHelper.visible = ev.value;
       if (msh3js.debug) console.log("tweakpane::Skeleton visibility set to:", ev.value);
-    });
+    }).element.title = "Show or hide the model's skeleton helper.";
 
     // Create a proxy object to display the animation status as a string.
     const statusProxy = {
@@ -1302,7 +1310,7 @@ const msh3js = {
     animationsPlaybackFolder.addBinding(statusProxy, "status", {
       label: "Status",
       readonly: true,
-    });
+    }).element.title = "Current status of the animation playback.";
 
     // Add buttons for starting/stopping
     animationsPlaybackFolder.addButton({ title: "Play" }).on("click", () => {
@@ -1310,12 +1318,12 @@ const msh3js = {
         msh3js.playAnimation(msh3js.ui.currentAnimation);
         if (msh3js.debug) console.log("tweakpane::Animation playback started for:", msh3js.ui.currentAnimation);
       }
-    });
+    }).element.title = "Play the selected animation.";
 
     animationsPlaybackFolder.addButton({ title: "Stop" }).on("click", () => {
       msh3js.stopAllAnimations(false);
       if (msh3js.debug) console.log("tweakpane::Animation playback stopped.");
-    });
+    }).element.title = "Stop the currently playing animation.";
 
     // Add slider to adjust playback speed
     animationsPlaybackFolder.addBinding(msh3js.ui, "animationSpeed", {
@@ -1327,7 +1335,7 @@ const msh3js = {
       // Update animation mixer speed for all loaded MSH models
       if (msh3js.three.mixer) msh3js.three.mixer.timeScale = ev.value;
       if (msh3js.debug) console.log(`tweakpane::Animation speed set to: ${ev.value}`);
-    });
+    }).element.title = "Adjust the playback speed of the animation.";
 
     // Add checkbox to toggle looping
     animationsPlaybackFolder.addBinding(msh3js.ui, "animationLoop", {
@@ -1343,7 +1351,7 @@ const msh3js = {
         });
         if (msh3js.debug) console.log("tweakpane::Animation looping set to:", ev.value);
       }
-    });
+    }).element.title = "Toggle whether the animation should loop.";
 
     // --- App Tab ---
     // Rendering options
@@ -1366,7 +1374,7 @@ const msh3js = {
           }
         }
       }
-    });
+    }).element.title = "Set the level of Multi-Sample Anti-Aliasing (MSAA). Higher values are smoother but more demanding. Requires renderer restart.";
 
     // Generate options for the pixel ratio dropdown.
     const pixelRatioOptions = [];
@@ -1386,7 +1394,7 @@ const msh3js = {
         msh3js.resize();
         if (msh3js.options.enableViewHelper && msh3js.three.viewHelper)
           msh3js.recreateRenderer();
-      });
+      }).element.title = "Set the rendering resolution multiplier. Lower values can improve performance at the cost of sharpness.";
 
     // Anisotropic filtering dropdown.
     const anisotropyOptions = [1, 2, 4, 8, 16]
@@ -1413,7 +1421,7 @@ const msh3js = {
             }
           }
         }
-      });
+      }).element.title = "Set the level of anisotropic filtering to improve texture quality on surfaces viewed at an angle.";
 
     // GPU Preference Control (high-performance vs low-power).
     renderingFolder
@@ -1428,7 +1436,7 @@ const msh3js = {
       .on("change", async () => {
         if (msh3js.debug) console.log("tweakpane::GPU Preference set to:", msh3js.options.preferredGPU);
         await msh3js.recreateRenderer();
-      });
+      }).element.title = "Request a specific GPU power profile from the browser. Requires renderer restart.";
 
     // Stats toggle to show/hide the performance monitor.
     renderingFolder
@@ -1438,7 +1446,7 @@ const msh3js = {
       .on("change", async () => {
         await msh3js.initStats(msh3js.options.showStats); // Toggle stats
         if (msh3js.debug) console.log("tweakpane::Show stats set to:", msh3js.options.showStats);
-      });
+      }).element.title = "Show or hide the performance and GPU statistics panel.";
 
     // Controls Folder
     const controlsFolder = appSettingsTab.addFolder({
@@ -1456,22 +1464,22 @@ const msh3js = {
         if (msh3js.debug) console.log("tweakpane::AutoRotate set to:", msh3js.options.autoRotate ? "on" : "off");
         // Show/hide speed control
         if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
-      });
+      }).element.title = "Automatically rotate the camera around the model.";
 
     // Auto-Rotate speed slider.
-    const autoRotateSpeedControl = controlsFolder // Controls for autorotate speed
+    const autoRotateSpeedControl = controlsFolder
       .addBinding(msh3js.options, "autoRotateSpeed", {
         label: "Auto-Rotate Speed",
         min: 0.01,
         max: 20,
       })
       .on("change", () => {
-        // Update autorotate speed directly on controls
         if (msh3js.three.orbitControls) {
           msh3js.three.orbitControls.autoRotateSpeed = msh3js.options.autoRotateSpeed;
         }
         if (msh3js.debug) console.log("tweakpane::AutoRotateSpeed set to:", msh3js.options.autoRotateSpeed);
       });
+    autoRotateSpeedControl.element.title = "Set the speed of the automatic camera rotation.";
     // Hide initially if autoRotate is off
     if (autoRotateSpeedControl) autoRotateSpeedControl.hidden = !msh3js.options.autoRotate;
 
@@ -1486,7 +1494,7 @@ const msh3js = {
           msh3js.three.orbitControls.update(); // Apply change immediately if needed
         }
         if (msh3js.debug) console.log("tweakpane::Constrols damping set to:", msh3js.options.controlDamping ? "on" : "off");
-      });
+      }).element.title = "Enable camera inertia for smoother movement after dragging.";
 
     // Axis Helper folder
     const axisHelperFolder = controlsFolder.addFolder({
@@ -1513,7 +1521,7 @@ const msh3js = {
           }
         }
         if (msh3js.debug) console.log("tweakpane::View helper set to:", msh3js.options.enableViewHelper ? "on" : "off");
-      });
+      }).element.title = "Show or hide the axis orientation gizmo in the corner of the viewport.";
 
     // Add color controls for X, Y, Z axes
     axisHelperFolder.addBinding(msh3js.options.viewHelperColors, "x", {
@@ -1522,7 +1530,7 @@ const msh3js = {
     }).on("change", async () => {
       if (msh3js.debug) console.log("tweakpane::X-Axis color changed to:", msh3js.options.viewHelperColors.x);
       await msh3js.recreateViewHelper();
-    });
+    }).element.title = "Set the color for the X-axis on the view helper.";
 
     axisHelperFolder.addBinding(msh3js.options.viewHelperColors, "y", {
       label: "Y-Axis Color",
@@ -1530,7 +1538,7 @@ const msh3js = {
     }).on("change", async () => {
       if (msh3js.debug) console.log("tweakpane::Y-Axis color changed to:", msh3js.options.viewHelperColors.y);
       await msh3js.recreateViewHelper();
-    });
+    }).element.title = "Set the color for the Y-axis on the view helper.";
 
     axisHelperFolder.addBinding(msh3js.options.viewHelperColors, "z", {
       label: "Z-Axis Color",
@@ -1538,7 +1546,7 @@ const msh3js = {
     }).on("change", async () => {
       if (msh3js.debug) console.log("tweakpane::Z-Axis color changed to:", msh3js.options.viewHelperColors.z);
       await msh3js.recreateViewHelper();
-    });
+    }).element.title = "Set the color for the Z-axis on the view helper.";
 
     // Preferences Folder for saving and clearing settings.
     const preferencesFolder = appSettingsTab.addFolder({
@@ -1560,7 +1568,7 @@ const msh3js = {
         msh3js._tweakpaneContainer.style.setProperty('--tweakpane-font', ev.value);
       }
       if (msh3js.debug) console.log("tweakpane::Font set to:", ev.value);
-    });
+    }).element.title = "Change the font used for the Tweakpane user interface.";
 
     // Button to save current app options to localStorage.
     const saveBtn = preferencesFolder.addButton({
@@ -1576,7 +1584,7 @@ const msh3js = {
           console.error("tweakpane::Error saving user preferences:", error);
         }
       }
-    });
+    }).element.title = "Save the current app and scene settings to your browser's local storage for future sessions.";
 
     // Button to clear saved preferences from localStorage.
     const cacheBtn = preferencesFolder.addButton({
@@ -1595,7 +1603,7 @@ const msh3js = {
       } catch (error) {
         console.error("tweakpane::Error clearing user preferences:", error);
       }
-    });
+    }).element.title = "Clear all saved settings and cached app files, then reload the page.";
 
     // Assign the newly created pane to the global object.
     msh3js.pane = pane;
@@ -3388,8 +3396,17 @@ const msh3js = {
     const file = e.target.files[0];
     if (!file) return;
 
+    // Show loading bar for the single file being uploaded.
+    msh3js.showLoadingBar(1);
+
+    // Store the URL in options. This will be a blob URL.
+    msh3js.options.backgroundImage = file.name;
+
     const fileURL = URL.createObjectURL(file);
-    msh3js.loadAndSetBackground(fileURL, file.name.toLowerCase());
+    await msh3js.loadAndSetBackground(fileURL, file.name.toLowerCase());
+
+    // Hide the loading bar once the background is set.
+    msh3js.hideLoadingBar();
   },
 
   // Calculate directional light positions
@@ -3531,8 +3548,17 @@ const msh3js = {
       backgroundTexture.mapping = THREE.EquirectangularReflectionMapping;
       backgroundTexture.colorSpace = THREE.SRGBColorSpace;
 
+      // Before assigning the new background, dispose of the old one if it's a texture
+      if (msh3js.three.scene.background && msh3js.three.scene.background.isTexture) {
+        msh3js.three.scene.background.dispose();
+        if (msh3js.debug) console.log("loadAndSetBackground::Disposed of old background texture.");
+      }
+
       msh3js.three.scene.background = backgroundTexture;
-      msh3js.three.scene.environment = backgroundTexture; // Also set as environment map for reflections
+      msh3js.three.scene.environment = backgroundTexture;
+
+      // Update the loading bar to show completion for this file.
+      msh3js.updateLoadingBar();
 
       if (msh3js.debug) console.log(`loadAndSetBackground::Successfully set ${filename} as background and environment.`);
     } catch (error) {
@@ -3549,6 +3575,9 @@ const msh3js = {
       alert("Please load a base model before importing animations.");
       return;
     }
+
+    // Show loading bar for the number of files being imported.
+    msh3js.showLoadingBar(files.length);
 
     // Get a set of all bone names from the currently loaded model(s).
     // This will be used to filter the incoming animation tracks.
@@ -3601,6 +3630,8 @@ const msh3js = {
         } catch (error) {
           console.error(`importAnimations::Error processing animation file ${file.name}:`, error);
         }
+        // Update loading bar progress and revoke URL
+        msh3js.updateLoadingBar();
         URL.revokeObjectURL(fileURL);
       }
     }
@@ -3608,7 +3639,10 @@ const msh3js = {
     if (animationsAdded) {
       msh3js.updateAnimationList(); // Efficiently update only the dropdown
       if (msh3js.debug) console.log("importAnimations::Animation list updated.");
-    }
+    } else if (msh3js.debug) console.log("importAnimations::No new animations were added.");
+
+    // Hide the loading bar when done.
+    msh3js.hideLoadingBar();
   },
 
   // Initialize cloth simulations for all cloth meshes
@@ -3932,8 +3966,10 @@ const msh3js = {
   },
 
   // Plays a specific animation by name
-  playAnimation(animationName) {
+  playAnimation(animationName, fromUi = true) {
     if (msh3js.debug) console.log(`playAnimation::Attempting to play "${animationName}"`);
+    if (fromUi) msh3js.ui.currentAnimation = animationName;
+
     msh3js.stopAllAnimations(false); // Stop previous animations without resetting the UI
 
     if (animationName === 'None') {
@@ -4239,15 +4275,15 @@ const msh3js = {
     } else if (group === "bgFileInput") {
       if (!element) return;
       if (action === "add") {
-        if (!msh3js._listeners.bgFileInput) {
-          element.addEventListener("change", msh3js.handleBackgroundImageInput, options);
-          msh3js._listeners.bgFileInput = msh3js.handleBackgroundImageInput;
+        // Always remove the old listener before adding a new one to prevent duplicates,
+        // especially since the element is recreated.
+        if (msh3js._listeners.bgFileInput) {
+          element.removeEventListener("change", msh3js._listeners.bgFileInput);
         }
+        element.addEventListener("change", msh3js.handleBackgroundImageInput, options);
+        msh3js._listeners.bgFileInput = msh3js.handleBackgroundImageInput;
       } else if (action === "remove") {
         if (msh3js._listeners.bgFileInput) {
-          // Note: Removing a 'once' listener before it fires can be tricky.
-          // In this app's flow, the element is recreated each time, so direct removal isn't critical.
-          // For robustness, one might store the specific handler instance if it needed to be removed mid-lifecycle.
           element.removeEventListener("change", msh3js._listeners.bgFileInput);
           msh3js._listeners.bgFileInput = null;
         }

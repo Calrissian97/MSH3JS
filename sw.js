@@ -21,7 +21,7 @@ const URLS_TO_CACHE = [
   "https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js",
   "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.6.8/build/index.module.min.js",
   "./android-chrome-192x192.png",
-  "./android-chrome-512x512.png",
+  "./android-chrome-256x256.png",
   "./favicon-16x16.png",
   "./favicon-32x32.png",
   "./favicon.ico",
