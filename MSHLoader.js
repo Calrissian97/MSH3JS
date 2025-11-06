@@ -301,7 +301,7 @@ export class MSHLoader extends THREE.Loader {
             }
 
             // If the model is a hardpoint, create it as an Object3D and ignore its geometry.
-            if (model.name.toLowerCase().startsWith("hp")) {
+            if (model.name.toLowerCase().startsWith("hp") || model.name.toLowerCase().includes("dummyroot")) {
                 const hardpoint = new THREE.Object3D();
                 hardpoint.name = model.name;
                 model.three = hardpoint;
