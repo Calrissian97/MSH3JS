@@ -2,7 +2,7 @@
   "name": "msh3js",
   "version": "1.0.0",
   "description": "Three.js model viewer for MSH files (Mesh format for the classic Star Wars Battlefront games).",
-  "license": "LGPL-3.0",
+  "license": "GPL-3.0",
   "author": "Landon Hull aka Calrissian97",
   "type": "module",
   "main": "msh3js.js",
