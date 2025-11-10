@@ -536,16 +536,51 @@ export class MSHLoader extends THREE.Loader {
 
                         for (const segment of model.modl.geom.segments) {
                             if (segment.wght && segment.wght.indices && segment.wght.weights) {
-                                for (let i = 0; i < segment.wght.indices.length; i++) {
-                                    // The index from WGHT points to a bone's mndx in the ENVL array.
-                                    const envlIndex = segment.wght.indices[i];
-                                    finalSkinIndices[skinOffset + i] = envlBoneMndx[envlIndex];
+                                const vertexCount = segment.posl.vertexCount;
+                                for (let v = 0; v < vertexCount; v++) {
+                                    const influences = [];
+                                    for (let i = 0; i < 4; i++) {
+                                        const influenceIndex = v * 4 + i;
+                                        const weight = segment.wght.weights[influenceIndex];
+                                        if (weight > 0) {
+                                            const envlIndex = segment.wght.indices[influenceIndex];
+                                            const mndx = envlBoneMndx[envlIndex];
+                                            influences.push({ index: mndx, weight: weight });
+                                        }
+                                    }
+
+                                    // Sort by weight descending and keep top 3
+                                    influences.sort((a, b) => b.weight - a.weight);
+                                    const topInfluences = influences.slice(0, 3);
+
+                                    // Normalize the weights of the top 3
+                                    const totalWeight = topInfluences.reduce((sum, inf) => sum + inf.weight, 0);
+                                    if (totalWeight > 0) {
+                                        for (const inf of topInfluences) {
+                                            inf.weight /= totalWeight;
+                                        }
+                                    }
+
+                                    // Populate final arrays
+                                    const baseSkinIndex = skinOffset + v * 4;
+                                    for (let i = 0; i < 4; i++) {
+                                        if (i < topInfluences.length) {
+                                            finalSkinIndices[baseSkinIndex + i] = topInfluences[i].index;
+                                            finalSkinWeights[baseSkinIndex + i] = topInfluences[i].weight;
+                                        }
+                                    }
                                 }
-                                finalSkinWeights.set(segment.wght.weights, skinOffset);
                             } else {
-                                // If a segment in a skinned mesh has no WGHT chunk, we must pad the skinning attributes with zeros
-                                // to prevent buffer length mismatches and NaN errors.
-                                // The typed arrays are already initialized with zeros, so we just need to advance the offset.
+                                // If a segment in a skinned mesh has no WGHT chunk, we must pad the skinning attributes.
+                                // Set skinIndex to 0 and skinWeight for the first influence to 1.0 for each vertex in this segment.
+                                // This prevents buffer length mismatches and NaN errors during skeleton remapping.
+                                const vertexCount = segment.posl.vertexCount;
+                                for (let v = 0; v < vertexCount; v++) {
+                                    const baseIndex = skinOffset + v * 4;
+                                    finalSkinIndices[baseIndex] = 0; // Default to bone 0
+                                    finalSkinWeights[baseIndex] = 1.0; // Full weight on bone 0
+                                    // The other weights (1, 2, 3) are already 0 from initialization.
+                                }
                             }
                             skinOffset += segment.posl.vertexCount * 4;
                         }
@@ -628,7 +663,6 @@ export class MSHLoader extends THREE.Loader {
                     model.three = mesh;
                 }
             }
-
             // --- Object3D (No geometry) ---
             else {
                 model.three = new THREE.Object3D;
@@ -1204,9 +1238,21 @@ export class MSHLoader extends THREE.Loader {
                                 byteOffset += 4;
                                 segm.uv0l.uvs = new Float32Array(uvCount * 2);
                                 for (let i = 0; i < uvCount; i++) {
-                                    if (byteOffset >= uv0lEnd) break;
-                                    segm.uv0l.uvs[i * 2] = this._readFloat32LE(buffer, byteOffset);
-                                    segm.uv0l.uvs[i * 2 + 1] = this._readFloat32LE(buffer, byteOffset + 4);
+                                    if (byteOffset >= uv0lEnd) {
+                                        console.warn("UV0L: Reached chunk end early. Filling remaining with default UVs.");
+                                        // Fill remaining with valid defaults instead of leaving NaN
+                                        for (let j = i; j < uvCount; j++) {
+                                            segm.uv0l.uvs[j * 2] = 0.0;
+                                            segm.uv0l.uvs[j * 2 + 1] = 0.0;
+                                        }
+                                        break;
+                                    }
+                                    const u = this._readFloat32LE(buffer, byteOffset);
+                                    const v = this._readFloat32LE(buffer, byteOffset + 4);
+
+                                    // Validate and sanitize (not doing so caused errors sometimes)
+                                    segm.uv0l.uvs[i * 2] = Number.isFinite(u) ? u : 0.0;
+                                    segm.uv0l.uvs[i * 2 + 1] = Number.isFinite(v) ? v : 0.0;
                                     byteOffset += 8;
                                 }
                                 byteOffset = uv0lEnd;
