@@ -2,25 +2,29 @@
 // msh3js.js - Main for msh3js msh model viewer
 // (c) 2025 by Landon Hull aka Calrissian97
 // This code is licensed under GPL 3.0
-
 // Module Imports ------------------------------------------------------
 import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.min.js";
-import { MSHLoader } from "MSHLoader";
-import { TGALoader } from "three/addons/loaders/TGALoader.min.js";
-import { EXRLoader } from "three/addons/loaders/EXRLoader.min.js";
-import { RGBELoader } from "three/addons/loaders/RGBELoader.min.js";
-import { EffectComposer } from "three/addons/postprocessing/EffectComposer.min.js";
-import { RenderPass } from "three/addons/postprocessing/RenderPass.min.js";
-import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.min.js";
-import { ShaderPass } from "three/addons/postprocessing/ShaderPass.min.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { MSHLoader } from "./MSHLoader.js";
+import { TGALoader } from "three/addons/loaders/TGALoader.js";
+import { EXRLoader } from "three/addons/loaders/EXRLoader.js";
+import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 // Note: The following will be imported dynamically instead
 //import { ViewHelper } from "view-helper";
 //import { Pane } from "tweakpane";
+//import "tweakpane-plugin-html-color-picker";
 //import Stats from "stats-gl";
 //import "webgl-lint";
 //import { MeshBVH } from "three-mesh-bvh";
-
+//import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+//import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+//import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+//import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+//import { getCurrentWindow } from "@tauri-apps/api/window";
+//import { join, dirname } from "@tauri-apps/api/path";
+//import { emit, listen } from "@tauri-apps/api/event";
+//import { open } from "@tauri-apps/plugin-dialog";
+//import { readFile, readTextFile, exists } from "@tauri-apps/plugin-fs";
 
 // Global app object/namespace for application state and data
 const msh3js = {
@@ -67,6 +71,7 @@ const msh3js = {
     tweakpaneFont: "Orbitron", // Font for Tweakpane UI
     AR: false, // Enable AR viewing
     VR: false, // Enable VR viewing
+    transparentBackground: false, // Enable transparent window (Tauri only)
   },
   startOptions: null, // Start options, can override saved app options
   // Three.JS objects
@@ -175,6 +180,7 @@ const msh3js = {
     tweakpaneClick: null,
     animFileInput: null,
     bgFileInput: null,
+    keyControls: null,
     draggable: new Map(), // Use a Map to track listeners for multiple draggable elements
     resizable: new Map(), // Use a Map to track listeners for multiple resizable elements
     dragMove: null, // For document-level drag listeners
@@ -218,6 +224,8 @@ const msh3js = {
   _draggableStates: new Map(),
   // State for resizable elements, keyed by the element itself
   _resizableStates: new Map(),
+  // Is in Tauri
+  isTauri: false,
 
   // Initializes app state and populates msh3js object
   async initApp(params, options = {}) {
@@ -372,8 +380,8 @@ const msh3js = {
     }
     if (msh3js.debug) console.log("initApp::appSize:", msh3js.size.width, "x", msh3js.size.height);
 
-    // Register service worker to serve app content offline, save/clear user preferences
-    if (window.navigator.serviceWorker) {
+    // Register service worker to serve app content offline, clear cache and preferences
+    if (window.navigator.serviceWorker && !msh3js.isTauri) {
       try {
         const registration = await window.navigator.serviceWorker.register("./sw.js");
         // Store registration status
@@ -466,24 +474,13 @@ const msh3js = {
     if (msh3js.debug)
       console.log("initApp::Supported features:", msh3js._supportedFeatures);
 
-    // Get launch files and process them if present
-    if (window.launchQueue) {
-      window.launchQueue.setConsumer(async (launchParams) => {
-        if (launchParams.files && launchParams.files.length > 0) {
-          const files = await Promise.all(launchParams.files.map(fh => fh.getFile()));
-          if (msh3js.debug) console.log("getLaunchFiles::App launched with files:", launchParams.files);
-          msh3js.addFiles(files);
-          await msh3js.processFiles(msh3js._files);
-        }
-      });
-    }
-
     // Create file input and add listeners
     msh3js.createFileInput();
     msh3js.manageListeners("add", "fileDropCanvas");
     msh3js.manageListeners("add", "resize");
     if (msh3js.debug) console.log("initApp::msh3js initialized", msh3js);
     // Return app object
+
     return msh3js;
   },
 
@@ -590,6 +587,9 @@ const msh3js = {
     if (options.urls && Array.isArray(options.urls) && options.urls.length > 0) {
       await msh3js.loadFromUrls(options.urls);
     }
+    // Get launch files for webapp or Tauri
+    await msh3js._getLaunchFiles();
+
     await msh3js.startThree(options);
   },
 
@@ -617,13 +617,16 @@ const msh3js = {
       msh3js.context = context;
     }
 
-    if (!msh3js.three.composer || !msh3js.three.bloomComposer) msh3js.createComposer();
+    if (msh3js.options.bloomEnabled === true)
+      if (!msh3js.three.composer || !msh3js.three.bloomComposer)
+        await msh3js.createComposer();
 
     if (!msh3js.three.loadingManager) msh3js.createLoaders();
 
     if (!msh3js.three.viewHelper)
       if (msh3js.options.enableViewHelper === true)
         await msh3js.createViewHelper();
+
     if (msh3js.debug) console.log("initThree::Three.js initialized:", msh3js.three);
   },
 
@@ -687,6 +690,9 @@ const msh3js = {
     if (msh3js.three.renderer) {
       msh3js.three.renderer.setAnimationLoop(msh3js.render);
     }
+
+    msh3js.manageListeners("add", "keyControls"); // Add key controls listener
+
     if (msh3js.debug) console.log("startThree: Three.js started:", msh3js.three);
   },
 
@@ -694,14 +700,17 @@ const msh3js = {
   async initStats(enabled = true) {
     if (enabled === true) {
       if (!msh3js.stats) {
-        // Check if Stats is already imported
         let Stats;
-        if (msh3js._modules.Stats)
+        // Check if Stats is already imported
+        if (msh3js._modules.Stats) {
           Stats = msh3js._modules.Stats;
-        else {
+        } else {
           const statsModule = await import("stats-gl");
           Stats = statsModule.default;
           msh3js._modules.Stats = Stats;
+          if (msh3js.debug) {
+            console.log("initStats::Stats module dynamically imported.");
+          }
         }
 
         if (msh3js.three.renderer) {
@@ -754,19 +763,23 @@ const msh3js = {
 
     // Dynamically import Tweakpane and its plugins if they haven't been loaded yet.
     let Pane, TweakpanePluginHtmlColorPicker;
-    if (msh3js._modules.Pane) {
-      Pane = msh3js._modules.Pane;
-      TweakpanePluginHtmlColorPicker = msh3js._modules.TweakpanePluginHtmlColorPicker;
-    } else {
-      // Otherwise, import tweakpane and plugins
+    if (!msh3js._modules.Pane) {
       const tweakpaneModule = await import("tweakpane");
-      if (msh3js.debug) console.log("initTweakpane::Tweakpane Module:", tweakpaneModule, "imported.");
-      TweakpanePluginHtmlColorPicker = await import("tweakpane-plugin-html-color-picker");
-      if (msh3js.debug) console.log("initTweakpane::Tweakpane Plugin Module:", TweakpanePluginHtmlColorPicker, "imported.");
       Pane = tweakpaneModule.Pane;
       msh3js._modules.Pane = Pane;
-      msh3js._modules.TweakpanePluginHtmlColorPicker = TweakpanePluginHtmlColorPicker;
+      if (msh3js.debug) console.log("initTweakpane::Tweakpane module dynamically imported.");
+    } else {
+      Pane = msh3js._modules.Pane;
     }
+
+    if (!msh3js._modules.TweakpanePluginHtmlColorPicker) {
+      TweakpanePluginHtmlColorPicker = await import("tweakpane-plugin-html-color-picker");
+      msh3js._modules.TweakpanePluginHtmlColorPicker = TweakpanePluginHtmlColorPicker;
+      if (msh3js.debug) console.log("initTweakpane::Tweakpane color picker plugin dynamically imported.");
+    } else {
+      TweakpanePluginHtmlColorPicker = msh3js._modules.TweakpanePluginHtmlColorPicker;
+    }
+
     // Initialize the main Tweakpane instance and register the imported plugins.
     const pane = new Pane({ title: "Controls", expanded: true, container: msh3js._tweakpaneContainer }); // Main pane
     pane.registerPlugin(TweakpanePluginHtmlColorPicker);
@@ -923,7 +936,77 @@ const msh3js = {
 
     // Add the upload button to the MSH tab itself, after the folder.
     mshTab.addButton({ title: "Upload" }).on("click", () => {
-      msh3js.clickFileInput();
+      if (msh3js.isTauri) {
+        (async () => {
+          try {
+            // open tauri dialog
+            let dialogModule = msh3js._modules.tauriDialog;
+            if (!dialogModule) {
+              dialogModule = await import("@tauri-apps/plugin-dialog");
+              msh3js._modules.tauriDialog = dialogModule;
+              if (msh3js.debug) console.log("tweakpane::Tauri Dialog Module imported.");
+            }
+            const { open } = dialogModule;
+            const selected = await open({
+              multiple: true,
+              directory: false,
+              filters: [{ name: 'MSH3JS Files', extensions: ['msh', 'tga', 'option'] }]
+            });
+
+            if (selected) {
+              console.log("Tauri files selected:", selected);
+
+              let fsModule = msh3js._modules.tauriFs;
+              if (!fsModule) {
+                fsModule = await import('@tauri-apps/plugin-fs');
+                msh3js._modules.tauriFs = fsModule;
+                if (msh3js.debug) console.log("tweakpane::Tauri fs module loaded.");
+              }
+
+              const { readTextFile, readFile } = fsModule;
+
+              const files = [];
+              const mshPaths = [];
+              for (const path of selected) {
+                if (path.endsWith('.msh')) mshPaths.push(path);
+
+                let content = null; // readFile or readTextFile
+                if (path.endsWith('.option')) content = readTextFile(path);
+                else content = await readFile(path);
+
+                const fileName = path.substring(path.lastIndexOf('\\') + 1).substring(path.lastIndexOf('/') + 1);
+                const file = new File([content], fileName, { type: 'application/octet-stream' });
+                files.push(file);
+              }
+
+              if (files.length > 0) {
+                msh3js.addFiles(files);
+                await msh3js.processFiles();
+                for (const path of mshPaths) {
+                  // Load option file of msh
+                  const optionFile = await msh3js._getOptionFile(path);
+                  if (optionFile) {
+                    msh3js.addFiles([optionFile]);
+                    await msh3js.processFiles(); // Possible bumpmap required texture added
+                  }
+                  // Load required textures of msh
+                  const mshData = msh3js.three.msh.find(msh => msh.fileName.toLowerCase() === path.substring(path.lastIndexOf('\\') + 1).substring(path.lastIndexOf('/') + 1).toLowerCase());
+                  if (mshData) {
+                    const requiredTextures = await msh3js._getRequiredTextures(path, mshData.requiredTextures);
+                    if (requiredTextures.length > 0) {
+                      msh3js.addFiles(requiredTextures);
+                      await msh3js.processFiles();
+                    }
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            console.error("Error opening Tauri dialog:", error);
+          }
+        })();
+      } else msh3js.clickFileInput();
+
       if (msh3js.debug) console.log("tweakpane::Upload button clicked.");
     }).element.title = "Upload new MSH, TGA, or .msh.option files.";
 
@@ -1060,7 +1143,33 @@ const msh3js = {
       title: "Background",
       expanded: true,
     });
-    bgFolder
+
+    const transparentBackgroundControl = bgFolder
+      .addBinding(msh3js.options, "transparentBackground", { label: "Transparent", })
+      .on("change", () => {
+        if (msh3js.options.transparentBackground) {
+          if (msh3js.three.scene.background && msh3js.three.scene.background.isTexture) {
+            msh3js.three.scene.background.dispose();
+            msh3js.three.scene.environment = null;
+            msh3js.options.backgroundImage = '';
+            if (msh3js.debug) console.log("tweakpane::Disposed of background texture.");
+          }
+          msh3js.three.scene.background = null;
+          backgroundColorControl.disabled = true;
+          backgroundImageControl.disabled = true;
+          if (msh3js.debug) console.log("tweakpane::Background set to transparent/null.");
+        } else {
+          backgroundColorControl.disabled = false;
+          backgroundImageControl.disabled = false;
+          msh3js.three.scene.background = new THREE.Color(msh3js.options.backgroundColor);
+          if (msh3js.debug) console.log("tweakpane::Background set back to color:", msh3js.options.backgroundColor);
+        }
+      });
+    transparentBackgroundControl.element.title = "Make the background transparent. This will remove any background image."
+    if (!msh3js.isTauri)
+      transparentBackgroundControl.hidden = true;
+
+    const backgroundColorControl = bgFolder
       .addBinding(msh3js.options, "backgroundColor", {
         label: "Background Color",
         view: "html-color-picker",
@@ -1078,14 +1187,16 @@ const msh3js = {
         // Set the new background color.
         msh3js.three.scene.background = new THREE.Color(msh3js.options.backgroundColor);
         if (msh3js.debug) console.log("tweakpane::Background set to color:", msh3js.options.backgroundColor, "and image/environment cleared.");
-      }).element.title = "Set the scene's background color. This will remove any background image.";
+      });
+    backgroundColorControl.element.title = "Set the scene's background color. This will remove any background image.";
 
     // Button to upload a background image.
-    bgFolder.addButton({ title: "Upload Background Image" })
+    const backgroundImageControl = bgFolder.addButton({ title: "Upload Background Image" })
       .on("click", () => {
         msh3js.createBackgroundImageInput().click()
         if (msh3js.debug) console.log("tweakpane::Background image upload button clicked.");
-      }).element.title = "Upload an equirectangular image (.hdr, .exr) or a standard image (.png, .jpg) to use as the scene background and environment map.";
+      });
+    backgroundImageControl.element.title = "Upload an equirectangular image (.hdr, .exr) or a standard image (.png, .jpg) to use as the scene background and environment map.";
 
     // View Folder for camera and viewport helper controls.
     const viewFolder = controlsTab.addFolder({
@@ -1153,8 +1264,14 @@ const msh3js = {
       title: "Bloom",
       expanded: hasGlow,
     });
-    bloomFolder.addBinding(msh3js.options, "bloomEnabled", { label: "Enabled" }).on("change", () => {
-      msh3js.three.bloomPass.enabled = msh3js.options.bloomEnabled;
+    bloomFolder.addBinding(msh3js.options, "bloomEnabled", { label: "Enabled" }).on("change", async (ev) => {
+      if (ev.value) {
+        // If enabling bloom, create the composer if it doesn't exist.
+        if (!msh3js.three.composer) {
+          await msh3js.createComposer();
+        }
+      }
+      msh3js.options.bloomEnabled = ev.value;
     }).element.title = "Enable or disable the post-processing bloom (glow) effect.";
     bloomFolder.addBinding(msh3js.options, "bloomStrength", { label: "Strength", min: 0, max: 3, step: 0.01 }).on("change", () => {
       if (msh3js.three.bloomPass) msh3js.three.bloomPass.strength = msh3js.options.bloomStrength;
@@ -1174,8 +1291,8 @@ const msh3js = {
 
     clothFolder.addBinding(msh3js.options, "clothSim", {
       label: "Enable Cloth Sim"
-    }).on("change", () => {
-      if (msh3js.options.clothSim) msh3js.initClothSimulations();
+    }).on("change", async () => {
+      if (msh3js.options.clothSim) await msh3js.initClothSimulations();
       else msh3js.resetClothSimulations();
       if (msh3js.debug) console.log("tweakpane::Cloth simulation set to:", msh3js.options.clothSim ? "on" : "off");
     }).element.title = "Enable or disable the cloth physics simulation for compatible models.";
@@ -1736,7 +1853,8 @@ const msh3js = {
       }
     }
 
-    if (msh3js.options.bloomEnabled) {
+    // If bloom is enabled AND the composers have been created, use the bloom pipeline.
+    if (msh3js.options.bloomEnabled && msh3js.three.bloomComposer && msh3js.three.composer) {
       // Temporarily replace non-glowing materials with a black material
       msh3js.prepareBloomPass();
       msh3js.three.bloomComposer.render(elapsedTime);
@@ -2109,11 +2227,13 @@ const msh3js = {
                 const bumpTextureName = textureName.replace(/(\.tga)?$/, "_bump.tga");
                 if (msh3js.debug) console.log(`processOptionFiles::-bump rule found. Applying ${bumpTextureName} to materials using ${textureName}.tga`);
 
+                mshData.requiredTextures.push(bumpTextureName);
+                if (msh3js.debug) console.log("processOptionFiles:: Added bumpmap to required textures:", bumpTextureName);
+
                 for (const material of mshData.materials) {
                   if (material.matd?.tx0d?.toLowerCase() === `${textureName}.tga` &&
                     (!material.matd.atrb.renderFlags.lightMap || !material.matd.atrb.renderFlags.detail)) {
                     material.matd.tx1d = bumpTextureName;
-                    mshData.requiredTextures.push(bumpTextureName);
 
                     // If the bump texture is already loaded, apply it immediately.
                     const existingTexture = mshData.textures.find(t => t.name.toLowerCase() === bumpTextureName);
@@ -2673,8 +2793,7 @@ const msh3js = {
     newRenderer.shadowMap.enabled = msh3js.options.enableShadows;
     newRenderer.setSize(params.size.width, params.size.height, false);
     newRenderer.setPixelRatio(params.pixelRatio);
-    newRenderer.setClearColor(0x0000AA);
-    newRenderer.autoClear = false;
+    newRenderer.setClearColor(0x000000, 0);
     newRenderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 
     msh3js.three.renderer = newRenderer;
@@ -2764,11 +2883,22 @@ const msh3js = {
   },
 
   // Create and assign Three.js EffectComposer
-  createComposer() {
+  async createComposer() {
     if (!msh3js.three.renderer || !msh3js.three.scene || !msh3js.three.camera) {
       console.error("createComposer::Renderer, Scene, or Camera not initialized.");
       return null;
     }
+
+    // Dynamically import post-processing modules
+    const { EffectComposer } = await import("three/addons/postprocessing/EffectComposer.js");
+    const { RenderPass } = await import("three/addons/postprocessing/RenderPass.js");
+    const { UnrealBloomPass } = await import("three/addons/postprocessing/UnrealBloomPass.js");
+    const { ShaderPass } = await import("three/addons/postprocessing/ShaderPass.js");
+
+    msh3js._modules.EffectComposer = EffectComposer;
+    msh3js._modules.RenderPass = RenderPass;
+    msh3js._modules.UnrealBloomPass = UnrealBloomPass;
+    msh3js._modules.ShaderPass = ShaderPass;
 
     // Dispose of existing composers and passes to prevent resource leaks
     if (msh3js.three.composer) {
@@ -2804,10 +2934,10 @@ const msh3js = {
     `;
 
     // 1. Create a RenderPass for the main scene.
-    const renderPass = new RenderPass(msh3js.three.scene, msh3js.three.camera);
+    const renderPass = new msh3js._modules.RenderPass(msh3js.three.scene, msh3js.three.camera);
 
     // 2. Create the bloom pass.
-    const bloomPass = new UnrealBloomPass(
+    const bloomPass = new msh3js._modules.UnrealBloomPass(
       new THREE.Vector2(msh3js.size.width, msh3js.size.height),
       msh3js.options.bloomStrength,
       msh3js.options.bloomRadius,
@@ -2816,17 +2946,17 @@ const msh3js = {
     msh3js.three.bloomPass = bloomPass;
 
     // 3. Create a composer for the bloom pass only.
-    const bloomComposer = new EffectComposer(msh3js.three.renderer);
+    const bloomComposer = new msh3js._modules.EffectComposer(msh3js.three.renderer);
     bloomComposer.renderToScreen = false; // Don't render to screen
     bloomComposer.addPass(renderPass);
     bloomComposer.addPass(bloomPass);
     msh3js.three.bloomComposer = bloomComposer;
 
     // 4. Create the final composer that combines the scene and the bloom effect.
-    const composer = new EffectComposer(msh3js.three.renderer);
+    const composer = new msh3js._modules.EffectComposer(msh3js.three.renderer);
     composer.addPass(renderPass);
     // This ShaderPass takes the bloom texture and adds it to the scene texture.
-    const finalPass = new ShaderPass(
+    const finalPass = new msh3js._modules.ShaderPass(
       new THREE.ShaderMaterial({
         uniforms: {
           baseTexture: { value: null },
@@ -2966,7 +3096,11 @@ const msh3js = {
     msh3js.three.scene = new THREE.Scene();
     msh3js.three.scene.name = "MSH3JS_Scene";
 
-    msh3js.three.scene.background = new THREE.Color(msh3js.options.backgroundColor);
+    if (msh3js.options.transparentBackground)
+      msh3js.three.scene.background = null;
+    else
+      msh3js.three.scene.background = new THREE.Color(msh3js.options.backgroundColor);
+
     // Create a single animation mixer for the scene
     msh3js.three.mixer = new THREE.AnimationMixer(msh3js.three.scene);
     msh3js.three.mixer.name = "sceneAnimationMixer";
@@ -3145,13 +3279,17 @@ const msh3js = {
 
       // Now, set the camera's clipping planes based on the full zoom range.
       // The near plane must be closer than the closest zoom point.
-      msh3js.three.camera.near = Math.max(0.1, msh3js.three.orbitControls.minDistance - boxRadius);
+      msh3js.three.camera.near = Math.max(0.01, msh3js.three.orbitControls.minDistance - boxRadius);
       // The far plane must be further than the furthest zoom point.
-      msh3js.three.camera.far = msh3js.three.orbitControls.maxDistance + boxRadius;
+      msh3js.three.camera.far = msh3js.three.orbitControls.maxDistance + boxRadius + 10;
 
       msh3js.three.orbitControls.update();
     }
     msh3js.three.camera.updateProjectionMatrix(); // Apply new near/far planes
+
+    // Save state for reset
+    if (msh3js.three.orbitControls)
+      msh3js.three.orbitControls.saveState();
 
     // Check if the scene depth is large enough to warrant a reverse depth buffer.
     const depthRatio = msh3js.three.camera.far / msh3js.three.camera.near;
@@ -3201,7 +3339,6 @@ const msh3js = {
     msh3js.three.orbitControls.minDistance = camera.near * 1.05;
     msh3js.three.orbitControls.maxDistance = camera.far * 0.95;
     msh3js.three.orbitControls.listenToKeyEvents(window);
-    msh3js.three.orbitControls.keyPanSpeed = 1.5;
     msh3js.three.orbitControls.autoRotate = msh3js.options.autoRotate;
     msh3js.three.orbitControls.autoRotateSpeed = msh3js.options.autoRotateSpeed;
     msh3js.three.orbitControls.enableDamping = msh3js.options.controlDamping;
@@ -3256,7 +3393,7 @@ const msh3js = {
       ViewHelper = msh3js._modules.ViewHelper;
     }
     else {
-      const viewHelperModule = await import("view-helper");
+      const viewHelperModule = await import("./ViewHelper.js");
       ViewHelper = viewHelperModule.ViewHelper;
       msh3js._modules.ViewHelper = ViewHelper;
     }
@@ -3651,13 +3788,15 @@ const msh3js = {
 
     let MeshBVH;
     if (msh3js._modules.MeshBVH) {
-      MeshBVH = msh3js._modules.MeshBVH;
+      MeshBVH = msh3js._modules.MeshBVH.MeshBVH;
     } else {
       try {
         const bvhModule = await import("three-mesh-bvh");
-        MeshBVH = bvhModule.MeshBVH;
-        msh3js._modules.MeshBVH = MeshBVH;
-        if (msh3js.debug) console.log("initClothSimulations::MeshBVH module dynamically imported.");
+        msh3js._modules.MeshBVH = bvhModule;
+        MeshBVH = msh3js._modules.MeshBVH.MeshBVH;
+        if (msh3js.debug) {
+          console.log("initClothSimulations::MeshBVH module dynamically imported.");
+        }
       } catch (e) {
         console.error("initClothSimulations::Failed to import MeshBVH:", e);
         return; // Can't proceed without BVH
@@ -4183,29 +4322,98 @@ const msh3js = {
       console.log("manageListeners::params::action:", action, "group:", group);
 
     if (group === "fileDropCanvas") {
-      const dropZone = msh3js.canvas ?? msh3js._appContainer.getElementById("msh3jsCanvas") ?? msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height });
-      if (dropZone) {
-        if (action === "add") {
-          if (!msh3js._listeners.fileDrop) {
-            try {
-              dropZone.addEventListener("dragenter", msh3js.preventDrag);
-              dropZone.addEventListener("dragover", msh3js.preventDrag);
-              dropZone.addEventListener("drop", msh3js.drop);
-              msh3js._listeners.fileDrop = true;
-            } catch (e) { console.error("manageListeners::Error adding fileDrop listeners:", e); }
-          }
-        } else if (action === "remove") {
-          if (msh3js._listeners.fileDrop) {
-            try {
-              dropZone.removeEventListener("dragenter", msh3js.preventDrag);
-              dropZone.removeEventListener("dragover", msh3js.preventDrag);
-              dropZone.removeEventListener("drop", msh3js.drop);
-              msh3js._listeners.fileDrop = null;
-            } catch (e) { console.error("manageListeners::Error removing fileDrop listeners:", e); }
-          }
+      if (action === "add") {
+        if (msh3js._listeners.fileDrop) return; // Listener already active
+
+        if (msh3js.isTauri) {
+          // Use Tauri's event-based file drop via window, caching the modules.
+          (async () => {
+            let windowModule = msh3js._modules.tauriWindow;
+            let fsModule = msh3js._modules.tauriFs;
+
+            if (!windowModule) {
+              windowModule = await import('@tauri-apps/api/window');
+              msh3js._modules.tauriWindow = windowModule;
+              if (msh3js.debug) console.log("manageListeners::Tauri window module loaded.");
+            }
+            if (!fsModule) {
+              fsModule = await import('@tauri-apps/plugin-fs');
+              msh3js._modules.tauriFs = fsModule;
+              if (msh3js.debug) console.log("manageListeners::Tauri fs module loaded.");
+            }
+
+            const { getCurrentWindow } = windowModule;
+            const { readFile, readTextFile } = fsModule;
+
+            const appWindow = getCurrentWindow();
+            appWindow.onDragDropEvent(async (event) => {
+              if (event.payload.type === 'drop') {
+                if (msh3js.debug) console.log("manageListeners::Tauri file drop event received:", event.payload.paths);
+                const files = [];
+                const mshPaths = [];
+                for (const path of event.payload.paths) {
+                  try {
+                    if (path.endsWith('.msh')) mshPaths.push(path);
+
+                    let content = null; // readFile or readTextFile
+                    if (path.endsWith('.option')) content = readTextFile(path);
+                    else content = await readFile(path);
+
+                    const fileName = path.substring(path.lastIndexOf('\\') + 1).substring(path.lastIndexOf('/') + 1);
+                    const file = new File([content], fileName, { type: 'application/octet-stream' });
+                    files.push(file);
+                  } catch (error) {
+                    console.error(`manageListeners::Error reading dropped file in Tauri: ${path}`, error);
+                  }
+                }
+                if (files.length > 0) {
+                  msh3js.addFiles(files);
+                  await msh3js.processFiles();
+                  for (const path of mshPaths) {
+                    // Load option file of msh
+                    const optionFile = await msh3js._getOptionFile(path);
+                    if (optionFile) {
+                      msh3js.addFiles([optionFile]);
+                      await msh3js.processFiles(); // Possible bumpmap required texture added
+                    }
+                    // Load required textures of msh
+                    const mshData = msh3js.three.msh.find(msh => msh.fileName.toLowerCase() === path.substring(path.lastIndexOf('\\') + 1).substring(path.lastIndexOf('/') + 1).toLowerCase());
+                    if (mshData) {
+                      const requiredTextures = await msh3js._getRequiredTextures(path, mshData.requiredTextures);
+                      if (requiredTextures.length > 0) {
+                        msh3js.addFiles(requiredTextures);
+                        await msh3js.processFiles();
+                      }
+                    }
+                  }
+                }
+              }
+            }).then(unlistenFn => {
+              msh3js._listeners.fileDrop = unlistenFn;
+            });
+          })();
         } else {
-          console.warn("manageListeners::Unknown action:", action);
+          // Use standard browser drag and drop
+          const dropZone = msh3js.canvas ?? msh3js._appContainer.getElementById("msh3jsCanvas") ?? msh3js.createCanvas({ id: "msh3jsCanvas", width: msh3js.size.width, height: msh3js.size.height });
+          if (dropZone) {
+            dropZone.addEventListener("dragenter", msh3js.preventDrag);
+            dropZone.addEventListener("dragover", msh3js.preventDrag);
+            dropZone.addEventListener("drop", msh3js.drop);
+            msh3js._listeners.fileDrop = true; // Mark as active
+          }
         }
+      } else if (action === "remove") {
+        if (typeof msh3js._listeners.fileDrop === 'function') {
+          msh3js._listeners.fileDrop(); // Call Tauri's unlisten function
+        } else if (msh3js._listeners.fileDrop === true) {
+          const dropZone = msh3js.canvas;
+          if (dropZone) {
+            dropZone.removeEventListener("dragenter", msh3js.preventDrag);
+            dropZone.removeEventListener("dragover", msh3js.preventDrag);
+            dropZone.removeEventListener("drop", msh3js.drop);
+          }
+        }
+        msh3js._listeners.fileDrop = null;
       }
     } else if (group === "fileInput") {
       if (action === "add") {
@@ -4386,6 +4594,81 @@ const msh3js = {
           element.removeEventListener('click', msh3js._listeners.dragClickCapture, { capture: true });
           msh3js._listeners.dragClickCapture = null;
         }
+      }
+    } else if (group === "keyControls") {
+      const keydownHandler = (e) => {
+        if (!msh3js.three.orbitControls) return;
+
+        // Prevent actions if user is typing in an input
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        switch (e.key) {
+          case '+':
+          case '=':
+            {
+              const offset = new THREE.Vector3().subVectors(msh3js.three.camera.position, msh3js.three.orbitControls.target);
+              offset.multiplyScalar(0.95); // Move 5% closer
+              msh3js.three.camera.position.copy(msh3js.three.orbitControls.target).add(offset);
+            }
+            break;
+          case '-':
+          case '_':
+            {
+              const offset = new THREE.Vector3().subVectors(msh3js.three.camera.position, msh3js.three.orbitControls.target);
+              offset.multiplyScalar(1.05); // Move 5% further
+              msh3js.three.camera.position.copy(msh3js.three.orbitControls.target).add(offset);
+            }
+            break;
+          case 'r':
+          case 'R':
+            msh3js.three.orbitControls.reset();
+            break;
+          case 'c':
+          case 'C':
+            if (msh3js._tweakpaneContainer) {
+              msh3js._tweakpaneContainer.style.display = msh3js._tweakpaneContainer.style.display === 'none' ? '' : 'none';
+            }
+            break;
+          case 'f':
+          case 'F':
+            msh3js.frameCamera();
+            break;
+          case 'x':
+          case 'X':
+            {
+              const distance = msh3js.three.camera.position.distanceTo(msh3js.three.orbitControls.target);
+              msh3js.three.camera.position.set(distance, 0, 0).add(msh3js.three.orbitControls.target);
+            }
+            break;
+          case 'y':
+          case 'Y':
+            {
+              const distance = msh3js.three.camera.position.distanceTo(msh3js.three.orbitControls.target);
+              msh3js.three.camera.position.set(0, distance, 0).add(msh3js.three.orbitControls.target);
+            }
+            break;
+          case 'z':
+          case 'Z':
+            {
+              const distance = msh3js.three.camera.position.distanceTo(msh3js.three.orbitControls.target);
+              msh3js.three.camera.position.set(0, 0, distance).add(msh3js.three.orbitControls.target);
+            }
+            break;
+          case 'o':
+          case 'O':
+            msh3js._toggleCameraType();
+            break;
+        }
+      };
+
+      if (action === "add") {
+        if (!msh3js._listeners.keyControls) {
+          window.addEventListener("keydown", keydownHandler);
+          msh3js._listeners.keyControls = keydownHandler;
+        }
+      } else if (action === "remove") {
+        window.removeEventListener("keydown", msh3js._listeners.keyControls);
+        msh3js._listeners.keyControls = null;
       }
     } else { console.warn("manageListeners::Unknown group:", group); }
   },
@@ -4669,6 +4952,243 @@ const msh3js = {
     if (files.length > 0) {
       msh3js.addFiles(files);
       await msh3js.processFiles(msh3js._files);
+    }
+  },
+
+  // In a Tauri environment, this function loads required textures from the same directory as a given MSH file.
+  async _getRequiredTextures(mshPath, requiredTextures) {
+    if (!msh3js.isTauri || !requiredTextures || requiredTextures.length === 0) {
+      return [];
+    }
+
+    if (msh3js.debug) console.log(`getRequiredTextures::Searching for ${requiredTextures.length} textures for ${mshPath}`);
+
+    let fsModule = msh3js._modules.tauriFs;
+    if (!fsModule) {
+      fsModule = await import('@tauri-apps/plugin-fs');
+      msh3js._modules.tauriFs = fsModule;
+    }
+
+    let pathModule = msh3js._modules.tauriPath;
+    if (!pathModule) {
+      pathModule = await import('@tauri-apps/api/path');
+      msh3js._modules.tauriPath = pathModule;
+    }
+
+    const { readFile, exists } = fsModule;
+    const { join, dirname } = pathModule;
+    const companionFiles = [];
+
+    try {
+      const mshDir = await dirname(mshPath);
+
+      for (const textureName of requiredTextures) {
+        if (!msh3js._files[textureName.toLowerCase()]) {
+          let texturePath = null;
+          const pathInSameDir = await join(mshDir, textureName);
+          const pathInPCDir = await join(mshDir, 'PC', textureName);
+          const pathInParentDir = await join(await dirname(mshDir), textureName);
+
+          if (await exists(pathInSameDir)) {
+            texturePath = pathInSameDir;
+          } else if (await exists(pathInPCDir)) {
+            texturePath = pathInPCDir;
+          } else if (await exists(pathInParentDir)) {
+            texturePath = pathInParentDir;
+          }
+
+          try {
+            if (texturePath) {
+              const content = await readFile(texturePath);
+              const file = new File([content], textureName, { type: 'application/octet-stream' });
+              companionFiles.push(file);
+              if (msh3js.debug) console.log(`getRequiredTextures::Successfully loaded companion texture: ${textureName}`);
+            } else if (msh3js.debug) console.log("getRequiredTextures::Companion texture not found:", textureName);
+          } catch (error) {
+            if (msh3js.debug) console.warn(`getRequiredTextures::Could not find or read companion texture: ${textureName}`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`getRequiredTextures::Error determining directory for ${mshPath}:`, error);
+    }
+
+    return companionFiles;
+  },
+
+  // In a Tauri environment, this function loads an associated .option file from the same directory as a given MSH file.
+  async _getOptionFile(mshPath) {
+    if (!msh3js.isTauri) {
+      return [];
+    }
+
+    const optionFileName = `${mshPath}.option`;
+    const baseName = optionFileName.substring(optionFileName.lastIndexOf('\\') + 1).substring(optionFileName.lastIndexOf('/') + 1);
+
+    // If the option file is already loaded, don't try to load it again.
+    if (msh3js._files[baseName.toLowerCase()]) {
+      return [];
+    }
+
+    if (msh3js.debug) console.log(`getOptionFile::Searching for option file for ${mshPath}`);
+
+    let fsModule = msh3js._modules.tauriFs;
+    if (!fsModule) {
+      fsModule = await import('@tauri-apps/plugin-fs');
+      msh3js._modules.tauriFs = fsModule;
+    }
+
+    const { readTextFile, exists } = fsModule;
+    let optionFile = null;
+
+    try {
+      if (await exists(optionFileName)) {
+        try {
+          const content = await readTextFile(optionFileName);
+          const file = new File([content], baseName, { type: 'text/plain' });
+          optionFile = file;
+          if (msh3js.debug) console.log(`getOptionFile::Successfully loaded companion option file: ${baseName}`);
+        } catch (error) {
+          if (msh3js.debug) console.warn(`getOptionFile::Could not read companion option file: ${baseName}`, error);
+        }
+      } else if (msh3js.debug) {
+        console.log("getOptionFile::Companion option file not found:", baseName);
+      }
+    } catch (error) {
+      console.error(`getOptionFile::Error checking for option file for ${mshPath}:`, error);
+    }
+
+    return optionFile;
+  },
+
+  // Toggles the camera between perspective and orthographic views.
+  _toggleCameraType() {
+    if (!msh3js.three.camera || !msh3js.three.orbitControls) return;
+
+    const oldCamera = msh3js.three.camera;
+    let newCamera;
+
+    if (oldCamera.isPerspectiveCamera) {
+      if (msh3js.debug) console.log("toggleCameraType::Switching to Orthographic camera.");
+      const distance = oldCamera.position.distanceTo(msh3js.three.orbitControls.target);
+      const height = 2 * Math.tan(THREE.MathUtils.degToRad(oldCamera.fov) / 2) * distance;
+      const width = height * oldCamera.aspect;
+
+      newCamera = new THREE.OrthographicCamera(width / -2, width / 2, height / 2, height / -2, 0.01, oldCamera.far);
+      newCamera.zoom = 1; // Start with a zoom of 1
+
+    } else if (oldCamera.isOrthographicCamera) {
+      if (msh3js.debug) console.log("toggleCameraType::Switching to Perspective camera.");
+      newCamera = new THREE.PerspectiveCamera(75, oldCamera.aspect, 0.1, oldCamera.far);
+      // Adjust zoom to maintain a similar view size. This is an approximation.
+      newCamera.zoom = oldCamera.zoom;
+    } else {
+      return; // Unknown camera type
+    }
+
+    // Copy properties from the old camera to the new one
+    newCamera.position.copy(oldCamera.position);
+    newCamera.quaternion.copy(oldCamera.quaternion);
+    newCamera.aspect = oldCamera.aspect;
+    newCamera.name = "sceneCamera";
+    newCamera.updateProjectionMatrix();
+
+    // Update all necessary components to use the new camera
+    msh3js.three.camera = newCamera;
+    msh3js.three.orbitControls.object = newCamera;
+
+    // Update post-processing passes
+    if (msh3js.three.renderPass) {
+      msh3js.three.renderPass.camera = newCamera;
+    }
+    if (msh3js.three.composer) {
+      msh3js.three.composer.passes[0].camera = newCamera; // Assumes RenderPass is the first pass
+    }
+    if (msh3js.three.bloomComposer) {
+      msh3js.three.bloomComposer.passes[0].camera = newCamera; // Assumes RenderPass is the first pass
+    }
+
+    if (msh3js.three.viewHelper) msh3js.three.viewHelper.camera = newCamera;
+  },
+
+  // Get files opened with webapp or Tauri
+  async _getLaunchFiles() {
+    // Get launch files and process them if present (for webapp)
+    if (window.launchQueue && !msh3js.isTauri) {
+      window.launchQueue.setConsumer(async (launchParams) => {
+        if (launchParams.files && launchParams.files.length > 0) {
+          const files = await Promise.all(launchParams.files.map(fh => fh.getFile()));
+          if (msh3js.debug) console.log("getLaunchFiles::App launched with files:", launchParams.files);
+          msh3js.addFiles(files);
+          await msh3js.processFiles();
+        }
+      });
+    }
+    // Do the same for Tauri app
+    if (msh3js.isTauri) {
+      let eventModule = msh3js._modules.tauriEvent;
+      let fsModule = msh3js._modules.tauriFs;
+
+      if (!eventModule) {
+        eventModule = await import('@tauri-apps/api/event');
+        msh3js._modules.tauriEvent = eventModule;
+        if (msh3js.debug) console.log("getLaunchFiles::Tauri event module loaded.");
+      }
+      if (!fsModule) {
+        fsModule = await import('@tauri-apps/plugin-fs');
+        msh3js._modules.tauriFs = fsModule;
+        if (msh3js.debug) console.log("getLaunchFiles::Tauri fs module loaded.");
+      }
+
+      const { readFile, readTextFile } = fsModule;
+      const { emit, listen } = eventModule;
+
+      listen("open-file", async (event) => {
+        const filePaths = event.payload;
+        if (filePaths && filePaths.length > 0) {
+          console.log("getLaunchFiles::Received launch files from Tauri:", filePaths);
+          const filesToProcess = [];
+          const mshPaths = [];
+          for (const path of filePaths) {
+            try {
+              if (path.endsWith('.msh')) mshPaths.push(path);
+
+              let content = null; // readFile or readTextFile
+              if (path.endsWith('.option')) content = await readTextFile(path);
+              else content = await readFile(path); // Ensure both are awaited
+
+              const fileName = path.substring(path.lastIndexOf('\\') + 1).substring(path.lastIndexOf('/') + 1);
+              const file = new File([content], fileName, { type: 'application/octet-stream' });
+              filesToProcess.push(file);
+            } catch (error) {
+              console.error(`getLaunchFiles::Error reading launch file in Tauri: ${path}`, error);
+            }
+          }
+          if (filesToProcess.length > 0) {
+            msh3js.addFiles(filesToProcess);
+            await msh3js.processFiles();
+            for (const path of mshPaths) {
+              // Load option file of msh
+              const optionFile = await msh3js._getOptionFile(path);
+              if (optionFile) {
+                msh3js.addFiles([optionFile]);
+                await msh3js.processFiles(); // Possible bumpmap required texture added
+              }
+              // Load required textures of msh
+              const mshData = msh3js.three.msh.find(msh => msh.fileName.toLowerCase() === path.substring(path.lastIndexOf('\\') + 1).substring(path.lastIndexOf('/') + 1).toLowerCase());
+              if (mshData) {
+                const requiredTextures = await msh3js._getRequiredTextures(path, mshData.requiredTextures);
+                if (requiredTextures.length > 0) {
+                  msh3js.addFiles(requiredTextures);
+                  await msh3js.processFiles();
+                }
+              }
+            }
+          }
+        }
+      });
+      // Inform Tauri that we're ready and listening
+      emit("frontend-ready");
     }
   },
 
