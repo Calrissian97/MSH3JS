@@ -1,20 +1,30 @@
 {
   "name": "msh3js",
-  "version": "0.0.1",
-  "description": "Three.js model viewer for MSH files (Mesh format for the classic Star Wars Battlefront games)",
-  "license": "LGPL-3.0-only",
-  "author": "Calrissian97",
-  "type": "commonjs",
+  "version": "1.0.0",
+  "description": "Three.js model viewer for MSH files (Mesh format for the classic Star Wars Battlefront games).",
+  "license": "LGPL-3.0",
+  "author": "Landon Hull aka Calrissian97",
+  "type": "module",
   "main": "msh3js.js",
   "scripts": {
-    "test": "npx serve ./ & npx open http://localhost:3000/index.html"
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "build:web": "node build.js"
   },
-  "peerDependencies": {
+  "dependencies": {
+    "stats-gl": "3.6.0",
     "three": "0.151.0",
-    "webgl-lint": "^0.1.0",
-    "stats-gl": "^0.1.0",
-    "tweakpane": ">=3.0.0 < 4.0.5",
-    "tweakpane-plugin-html-color-picker": "^1.0.0",
-    "ammo.js": "0.0.10"
+    "three-mesh-bvh": "0.6.8",
+    "tweakpane": "4.0.5",
+    "tweakpane-plugin-html-color-picker": "1.0.0",
+    "webgl-lint": "1.11.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/cli": "^2.9.3",
+    "@tauri-apps/plugin-fs": "^2.4.4",
+    "@tauri-apps/plugin-dialog": "^2.4.2",
+    "esbuild": "^0.25.12"
   }
 }
