@@ -18,7 +18,8 @@
   <!-- Meta -->
   <meta property="og:type" content="website" />
   <meta property="og:title" content="MSH3JS MSH file model viewer" />
-  <meta property="og:description" content="MSH file viewer PWA via Three.js for models from the original Star Wars Battlefront games." />
+  <meta property="og:description"
+    content="MSH file viewer PWA via Three.js for models from the original Star Wars Battlefront games." />
   <meta property="og:image" content="https://calrissian97.github.io/MSH3JS/android-chrome-256x256.png" />
   <meta property="og:url" content="https://calrissian97.github.io/MSH3JS" />
 
@@ -27,7 +28,8 @@
   <meta property="twitter:domain" content="calrissian97.github.io">
   <meta property="twitter:url" content="https://calrissian97.github.io/MSH3JS">
   <meta name="twitter:title" content="MSH3JS MSH file model viewer">
-  <meta name="twitter:description" content="MSH file viewer PWA via Three.js for models from the original Star Wars Battlefront games.">
+  <meta name="twitter:description"
+    content="MSH file viewer PWA via Three.js for models from the original Star Wars Battlefront games.">
   <meta name="twitter:image" content="https://calrissian97.github.io/MSH3JS/android-chrome-256x256.png">
 
   <!-- PWA metadata, icons -->
@@ -38,9 +40,6 @@
   <link rel="icon" href="favicon-32x32.png" sizes="32x32" />
   <link rel="apple-touch-icon" href="apple-touch-icon.png" />
 
-  <!-- Fonts -->
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">
-
   <!-- Not much styling, just use inline -->
   <style>
     @font-face {
@@ -48,12 +47,22 @@
       src: url('./Aurebesh.ttf') format('truetype');
     }
 
+    @font-face {
+      /* From google fonts */
+      font-family: 'Orbitron';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('./Orbitron.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
     html,
     body {
       margin: 0;
       width: 100%;
       height: 100%;
-      background-color: rgb(0, 0, 0);
+      background-color: rgba(0, 0, 0, 0);
       scrollbar-width: none;
     }
 
@@ -166,24 +175,6 @@
 </head>
 
 <body>
-  <!-- Imports for msh3js -->
-  <script type="importmap">
-      {
-        "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.151.0/build/three.module.min.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.151.0/examples/jsm/",
-          "webgl-lint": "https://cdn.jsdelivr.net/npm/webgl-lint/webgl-lint.min.js",
-          "stats-gl": "https://cdn.jsdelivr.net/npm/stats-gl/dist/main.min.js",
-          "tweakpane": "https://cdn.jsdelivr.net/npm/tweakpane/dist/tweakpane.min.js",
-          "tweakpane-plugin-html-color-picker": "https://cdn.jsdelivr.net/npm/tweakpane-plugin-html-color-picker/dist/tweakpane-plugin-html-color-picker.min.js",
-          "view-helper": "./ViewHelper.js",
-          "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.6.8/build/index.module.min.js",
-          "MSHLoader": "./MSHLoader.js",
-          "msh3js": "./msh3js.js"
-        }
-      }
-    </script>
-
   <!-- Canvas to render .msh file -->
   <div id="app">
     <canvas id="msh3jsCanvas" width="1" height="1"></canvas>
@@ -195,12 +186,15 @@
 
   <!-- App entry (ESM) -->
   <script type="module">
-    // App object/namespace for application state and data
-    import msh3js from "msh3js";
-
     // When HTML is loaded...
     document.addEventListener("DOMContentLoaded", async () => {
-      if (msh3js.debug) console.log("HTML loaded");
+      const isTauri = !!window.isTauri;
+
+      // Dynamically import the main module.
+      const { default: msh3js } = await import('./msh3js.bundle.js');
+      msh3js.isTauri = isTauri;
+
+      if (msh3js.debug) console.log("HTML Loaded.");
 
       // Get canvas element
       const canvas = document.getElementById("msh3jsCanvas");
