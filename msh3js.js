@@ -1339,7 +1339,8 @@ const msh3js = {
         msh3js.options.bloomEnabled = msh3js.three.preXRBloom;
       }
       if (msh3js.debug) console.log("tweakpane::AR set to:", msh3js.options.AR ? "on" : "off");
-    }).element.title = "Enter Augmented Reality (AR) mode. Requires a compatible device and browser.";
+    });
+    arControl.element.title = "Enter Augmented Reality (AR) mode. Requires a compatible device and browser.";
 
     const vrControl = xrFolder.addBinding(msh3js.options, "VR", {
       label: "VR",
@@ -1356,7 +1357,8 @@ const msh3js = {
         msh3js.options.bloomEnabled = msh3js.three.preXRBloom;
       }
       if (msh3js.debug) console.log("tweakpane::VR set to:", msh3js.options.VR ? "on" : "off");
-    }).element.title = "Enter Virtual Reality (VR) mode. Requires a compatible headset and browser.";
+    });
+    vrControl.element.title = "Enter Virtual Reality (VR) mode. Requires a compatible headset and browser.";
 
     // --- Anim Tab ---
     // Animation list
@@ -1491,7 +1493,8 @@ const msh3js = {
           }
         }
       }
-    }).element.title = "Set the level of Multi-Sample Anti-Aliasing (MSAA). Higher values are smoother but more demanding. Requires renderer restart.";
+    });
+    aaControl.element.title = "Set the level of Multi-Sample Anti-Aliasing (MSAA). Higher values are smoother but more demanding. Requires renderer restart.";
 
     // Generate options for the pixel ratio dropdown.
     const pixelRatioOptions = [];
@@ -1691,8 +1694,7 @@ const msh3js = {
     const saveBtn = preferencesFolder.addButton({
       title: "Save",
       label: "Options",
-    });
-    saveBtn.on("click", () => {
+    }).on("click", () => {
       if (msh3js._supportedFeatures.localStorage === true) {
         try {
           window.localStorage.setItem("msh3js_options", JSON.stringify(msh3js.options));
@@ -1701,14 +1703,14 @@ const msh3js = {
           console.error("tweakpane::Error saving user preferences:", error);
         }
       }
-    }).element.title = "Save the current app and scene settings to your browser's local storage for future sessions.";
+    });
+    saveBtn.element.title = "Save the current app and scene settings to your browser's local storage for future sessions.";
 
     // Button to clear saved preferences from localStorage.
     const cacheBtn = preferencesFolder.addButton({
       title: "Clear",
       label: "",
-    });
-    cacheBtn.on("click", () => {
+    }).on("click", () => {
       try {
         if (msh3js._serviceWorker) {
           msh3js._serviceWorker.postMessage({ action: "clearCache" });
@@ -1720,7 +1722,8 @@ const msh3js = {
       } catch (error) {
         console.error("tweakpane::Error clearing user preferences:", error);
       }
-    }).element.title = "Clear all saved settings and cached app files, then reload the page.";
+    });
+    cacheBtn.element.title = "Clear all saved settings and cached app files, then reload the page.";
 
     // Assign the newly created pane to the global object.
     msh3js.pane = pane;
