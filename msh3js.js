@@ -954,7 +954,7 @@ const msh3js = {
             });
 
             if (selected) {
-              console.log("Tauri files selected:", selected);
+              if (msh3js.debug) console.log("Tauri files selected:", selected);
 
               let fsModule = msh3js._modules.tauriFs;
               if (!fsModule) {
@@ -2932,7 +2932,9 @@ const msh3js = {
       uniform sampler2D bloomTexture;
       varying vec2 vUv;
       void main() {
-        gl_FragColor = texture2D( baseTexture, vUv ) + texture2D( bloomTexture, vUv );
+        // Additive blending: Add the bloom color to the base color.
+        // The alpha of the bloom texture is ignored, preserving the base alpha.
+        gl_FragColor = texture2D( baseTexture, vUv ) + vec4( 1.0, 1.0, 1.0, 0.0 ) * texture2D( bloomTexture, vUv );
       }
     `;
 
@@ -2948,22 +2950,28 @@ const msh3js = {
     );
     msh3js.three.bloomPass = bloomPass;
 
-    // 3. Create a composer for the bloom pass only.
-    const bloomComposer = new msh3js._modules.EffectComposer(msh3js.three.renderer);
+    // Create a shared render target that supports alpha transparency.
+    const renderTarget = new THREE.WebGLRenderTarget(msh3js.size.width, msh3js.size.height, {
+      format: THREE.RGBAFormat,
+      type: THREE.HalfFloatType
+    });
+
+    // 3. Create a composer for the bloom pass. This renders the glowing parts to a separate buffer.
+    const bloomComposer = new msh3js._modules.EffectComposer(msh3js.three.renderer, renderTarget);
     bloomComposer.renderToScreen = false; // Don't render to screen
     bloomComposer.addPass(renderPass);
     bloomComposer.addPass(bloomPass);
     msh3js.three.bloomComposer = bloomComposer;
 
     // 4. Create the final composer that combines the scene and the bloom effect.
-    const composer = new msh3js._modules.EffectComposer(msh3js.three.renderer);
+    const composer = new msh3js._modules.EffectComposer(msh3js.three.renderer, renderTarget);
     composer.addPass(renderPass);
     // This ShaderPass takes the bloom texture and adds it to the scene texture.
     const finalPass = new msh3js._modules.ShaderPass(
       new THREE.ShaderMaterial({
         uniforms: {
           baseTexture: { value: null },
-          bloomTexture: { value: bloomComposer.renderTarget2.texture }
+          bloomTexture: { value: bloomComposer.readBuffer.texture }
         },
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
@@ -5149,7 +5157,7 @@ const msh3js = {
       listen("open-file", async (event) => {
         const filePaths = event.payload;
         if (filePaths && filePaths.length > 0) {
-          console.log("getLaunchFiles::Received launch files from Tauri:", filePaths);
+          if (msh3js.debug) console.log("getLaunchFiles::Received launch files from Tauri:", filePaths);
           const filesToProcess = [];
           const mshPaths = [];
           for (const path of filePaths) {
