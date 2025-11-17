@@ -1768,11 +1768,11 @@ const msh3js = {
     for (const material of msh3js.three.dynamic.scrollingMaterials) {
       if (material.three.map?.userData.isScrolling) {
         const scrollData = material.three.map.userData;
-        scrollData._scrollTimeU = (scrollData._scrollTimeU + scrollData.scrollSpeedU * elapsedTime) % 1.0;
-        scrollData._scrollTimeV = (scrollData._scrollTimeV + scrollData.scrollSpeedV * elapsedTime) % 1.0;
-        material.three.map.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
+        scrollData._scrollTimeU = (scrollData._scrollTimeU + scrollData.scrollSpeedU * elapsedTime);
+        scrollData._scrollTimeV = (scrollData._scrollTimeV + scrollData.scrollSpeedV * elapsedTime);
+        material.three.map.offset.set(-scrollData._scrollTimeU, scrollData._scrollTimeV);
         if (material.three.specularMap?.userData.isScrolling) {
-          material.three.specularMap.offset.set(scrollData._scrollTimeU, scrollData._scrollTimeV);
+          material.three.specularMap.offset.set(-scrollData._scrollTimeU, scrollData._scrollTimeV);
         }
       }
     }
