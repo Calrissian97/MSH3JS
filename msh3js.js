@@ -3469,7 +3469,7 @@ const msh3js = {
       fileInput.type = "file";
       fileInput.style.display = "none";
       fileInput.multiple = true;
-      fileInput.accept = ".msh,.tga,.msh.option";
+      fileInput.accept = ".msh,.tga,.msh.option,application/octet-stream,image/tga,text/plain";
       msh3js._appContainer.appendChild(fileInput);
       msh3js._fileInput = fileInput;
       if (msh3js.debug) console.log("createFileInput::File input created: ", fileInput);
@@ -3503,7 +3503,7 @@ const msh3js = {
       animFileInput.type = "file";
       animFileInput.style.display = "none";
       animFileInput.multiple = true;
-      animFileInput.accept = ".msh"; // Only accept msh files
+      animFileInput.accept = ".msh,application/octet-stream"; // Only accept msh files
       msh3js._appContainer.appendChild(animFileInput);
       msh3js.manageListeners("add", "animFileInput", animFileInput);
     } catch (e) { console.error("createAnimationFileInput::Error creating file input:", e); }
