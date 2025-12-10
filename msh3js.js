@@ -2009,7 +2009,7 @@ const msh3js = {
             }
 
             if (childObj.userData.isCloth) {
-              // The full cloth sim object will be created and pushed in initClothSimulations
+              // The full cloth sim object will be created and pushed in initClothSimulations instead
             } else if (childObj.name.toLowerCase().startsWith("c_") && !msh3js.three.dynamic.collisionObjects.find(c => c.uuid === childObj.uuid)) {
               msh3js.three.dynamic.collisionObjects.push(childObj);
             }
@@ -3972,11 +3972,27 @@ const msh3js = {
           }
         }
 
+        // Determine which collision objects this cloth mesh should interact with.
+        const specificCollisionObjects = [];
+        if (clothData?.coll?.collisionObjects) {
+          for (const collRef of clothData.coll.collisionObjects) {
+            const collObjectName = collRef.name.toLowerCase();
+            // Find the actual collision object in the global list.
+            const collisionObj = msh3js.three.dynamic.collisionObjects.find(
+              (obj) => obj.name.toLowerCase() === collObjectName
+            );
+            if (collisionObj) {
+              specificCollisionObjects.push(collisionObj);
+            }
+          }
+        }
+
         const newClothMesh = {
           mesh: clothMesh,
           particles: particles,
           constraints: constraints,
-          collisionObjects: msh3js.three.dynamic.collisionObjects,
+          // Use only the collision objects specific to this cloth mesh.
+          collisionObjects: specificCollisionObjects.length > 0 ? specificCollisionObjects : msh3js.three.dynamic.collisionObjects,
         };
         msh3js.three.dynamic.clothMeshes.push(newClothMesh);
 
@@ -3984,8 +4000,8 @@ const msh3js = {
           console.log(`Cloth simulation initialized for ${clothMesh.name}:`, {
             particles: particles.length,
             constraints: constraints.length,
-            fixedPoints: particles.filter(p => p.fixed).length,
-            collisionObjects: msh3js.three.dynamic.collisionObjects.length,
+            fixedPoints: particles.filter(p => p.fixed).length, // Fallback to all if none are specified.
+            collisionObjects: newClothMesh.collisionObjects
           });
         }
       }
