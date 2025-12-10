@@ -1580,6 +1580,42 @@ export class MSHLoader extends THREE.Loader {
                                     byteOffset += 2;
                                 }
                                 byteOffset = bprsEnd;
+                            } else if (clthChild === "COLL") {
+                                byteOffset += 4;
+                                const collSize = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                const collEnd = byteOffset + collSize;
+                                const collCount = this._readUint32LE(buffer, byteOffset);
+                                byteOffset += 4;
+                                clth.coll.collisionObjCount = collCount;
+                                clth.coll.collisionObjects = []
+                                for (let i = 0; i < collCount; i++) {
+                                    let collName, parentName;
+                                    // String has two values joined by null terminator
+                                    ({ str1: collName, str2: parentName, newOffset: byteOffset } = this._readCOLLStrings(buffer, byteOffset));
+
+                                    let shape = this._readUint32LE(buffer, byteOffset);
+                                    byteOffset += 4;
+
+                                    let radius = this._readFloat32LE(buffer, byteOffset);
+                                    byteOffset += 4;
+
+                                    let height = this._readFloat32LE(buffer, byteOffset);
+                                    byteOffset += 4;
+
+                                    let width = this._readFloat32LE(buffer, byteOffset);
+                                    byteOffset += 4;
+
+                                    clth.coll.collisionObjects[i] = {
+                                        name: collName,
+                                        parentName: parentName,
+                                        shape: shape,
+                                        radius: radius,
+                                        height: height,
+                                        width: width
+                                    }
+                                }
+                                byteOffset = collEnd;
                             } else {
                                 // Skip unknown chunk
                                 byteOffset += 4;
@@ -1875,6 +1911,49 @@ export class MSHLoader extends THREE.Loader {
             console.error("Error reading string of length", length, "at byteOffset", byteOffset, ":", error);
             return "";
         }
+    }
+
+    _readCOLLStrings(buffer, byteOffset) {
+        const startOffset = byteOffset;
+
+        // --- Read First String ---
+        let i = startOffset;
+        while (i < buffer.byteLength && this._readUint8LE(buffer, i) !== 0) {
+            i++;
+        }
+        if (i >= buffer.byteLength) {
+            throw new Error('Null terminator not found in buffer');
+        }
+        const chars = [];
+        for (let j = startOffset; j < i; j++) {
+            chars.push(String.fromCharCode(this._readUint8LE(buffer, j)));
+        }
+        const str1 = chars.join('');
+
+        // --- Read Second String ---
+        const secondStartOffset = i + 1;
+        let k = secondStartOffset;
+        while (k < buffer.byteLength && this._readUint8LE(buffer, k) !== 0) {
+            k++;
+        }
+        if (k >= buffer.byteLength) {
+            throw new Error('Second null terminator not found in buffer for COLL strings');
+        }
+        const secondChars = [];
+        for (let j = secondStartOffset; j < k; j++) {
+            secondChars.push(String.fromCharCode(this._readUint8LE(buffer, j)));
+        }
+        const str2 = secondChars.join('');
+
+        // --- Calculate Padded Length ---
+        // The block containing the two strings is padded with nulls to a 4-byte boundary.
+        const length = k - startOffset + 1; // Total length from start of str1 to the null after str2
+        let newOffset = startOffset + length;
+
+        // Final sanity check to ensure we don't go past the buffer end.
+        if (newOffset > buffer.byteLength) newOffset = buffer.byteLength;
+
+        return { str1, str2, newOffset };
     }
 
     /**
