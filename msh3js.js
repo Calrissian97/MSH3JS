@@ -29,7 +29,7 @@ import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 // Global app object/namespace for application state and data
 const msh3js = {
   // Debugging flag
-  debug: false,
+  debug: true,
   // App options
   options: {
     controlDamping: true, // orbitControls damping
@@ -72,8 +72,10 @@ const msh3js = {
     AR: false, // Enable AR viewing
     VR: false, // Enable VR viewing
     transparentBackground: false, // Enable transparent window (Tauri only)
+    showMSHData: false, // Show raw collected MSH data folders
   },
-  startOptions: null, // Start options, can override saved app options
+  // Start options, can override saved app options
+  startOptions: null,
   // Three.JS objects
   three: {
     // Three.JS loading manager
@@ -802,6 +804,7 @@ const msh3js = {
 
     // --- MSH Tab ---
     const filesFolder = mshTab.addFolder({ title: "Files", expanded: false });
+    let mshInfoFolder = null; // Hoist mshInfoFolder so we can set it's visibility outside the loop
 
     // Loop through each loaded MSH file and create a folder for it
     if (msh3js.three.msh.length > 0) filesFolder.expanded = true;
@@ -814,6 +817,25 @@ const msh3js = {
       mshFolder.addBinding(mshData, "fileSize", { label: "Filesize", readonly: true, format: (v) => `${Math.round(v)} bytes` }).element.title = "The size of the loaded file in bytes.";
       mshFolder.addBinding(mshData, "lastModified", { label: "Last Modified", readonly: true, format: (v) => new Date(v).toLocaleString() }).element.title = "The date the file was last modified.";
       mshFolder.addBinding(mshData.sceneInfo, "name", { label: "Scene Name", readonly: true }).element.title = "The internal scene name from the MSH file.";
+
+      // Advanced MSH Data for debugging
+      mshInfoFolder = mshFolder.addFolder({ title: "MSH Data", expanded: false, hidden: !msh3js.options.showMSHData });
+      const sinfFolder = mshInfoFolder.addFolder({ title: "SINF", expanded: false });
+      const sinfInfo = sinfFolder.addBinding(mshData.sceneInfo, "string", { label: "", readonly: true, multiline: true, rows: 10 });
+      sinfInfo.element.children[0].style.display = 'none'; // Hide label
+      sinfInfo.element.children[1].style.width = '100%'; // Make value take full width
+      const matlFolder = mshInfoFolder.addFolder({ title: "MATL", expanded: false });
+      const matlInfo = matlFolder.addBinding(mshData.matl, "string", { label: "", readonly: true, multiline: true, rows: 10 });
+      matlInfo.element.children[0].style.display = 'none';
+      matlInfo.element.children[1].style.width = '100%';
+      const modlFolder = mshInfoFolder.addFolder({ title: "MODL", expanded: false });
+      const modlInfo = modlFolder.addBinding(mshData.modl, "string", { label: "", readonly: true, multiline: true, rows: 10 });
+      modlInfo.element.children[0].style.display = 'none';
+      modlInfo.element.children[1].style.width = '100%';
+      const anm2Folder = mshInfoFolder.addFolder({ title: "ANM2", expanded: false });
+      const anm2Info = anm2Folder.addBinding(mshData.anm2, "string", { label: "", readonly: true, multiline: true, rows: 10 });
+      anm2Info.element.children[0].style.display = 'none';
+      anm2Info.element.children[1].style.width = '100%';
 
       // Models Folder
       const modelsInMsh = [];
@@ -1674,6 +1696,13 @@ const msh3js = {
       expanded: true,
     });
 
+    preferencesFolder.addBinding(msh3js.options, 'showMSHData', {
+      label: 'Show MSH Data'
+    }).on('change', async () => {
+      mshInfoFolder.hidden = !msh3js.options.showMSHData;
+      if (msh3js.debug) console.log("tweakpane::Show MSH Data folder visibility changed to:", msh3js.options.showMSHData);
+    }).element.title = "Toggle visibility of MSH Data folder for debugging parsed MSH data.";
+
     // Dropdown to select the UI font.
     preferencesFolder.addBinding(msh3js.options, 'tweakpaneFont', {
       label: 'UI Font',
@@ -2143,7 +2172,9 @@ const msh3js = {
         lastModified: fileObj.file.lastModified,
         textures: [],
         requiredTextures: mshScene.userData.textures,
+        matl: mshScene.userData.matl,
         materials: mshScene.userData.materials,
+        modl: mshScene.userData.modl,
         models: mshScene.userData.models,
         sceneInfo: mshScene.userData.sceneInfo,
         group: mshScene,
@@ -2151,6 +2182,7 @@ const msh3js = {
         hasSkeleton: mshScene.userData.hasSkeleton,
         hasVertexColors: mshScene.userData.hasVertexColors,
         hasShadowVolume: mshScene.userData.hasShadowVolume,
+        anm2: mshScene.userData.anm2,
         animations: mshScene.userData.animations,
         keyframes: mshScene.userData.keyframes,
       };
