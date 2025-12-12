@@ -18,11 +18,14 @@ export class MSHLoader extends THREE.Loader {
         super(manager);
         // Properties to store the parsed data from the MSH file.
         this.sceneInfo = null;
+        this.matl = null;
         this.models = null;
+        this.modl = null;
         this.materials = null;
         this.textures = null;
         this.animations = null;
         this.keyframes = null;
+        this.anm2 = null;
         // Globals for file reading operations.
         this.buffer = null;
         this.byteOffset = null;
@@ -34,11 +37,14 @@ export class MSHLoader extends THREE.Loader {
         this.buffer = null;
         this.byteOffset = null;
         this.sceneInfo = null;
+        this.matl = null;
         this.models = null;
+        this.modl = null;
         this.materials = null;
         this.textures = null;
         this.animations = null;
         this.keyframes = null;
+        this.anm2 = null;
     }
 
     /**
@@ -832,8 +838,11 @@ export class MSHLoader extends THREE.Loader {
         scene.userData.sceneInfo = this.sceneInfo;
         scene.userData.animations = this.animations;
         scene.userData.keyframes = this.keyframes;
-        scene.name = this.sceneInfo.name; // Give THREE.Scene name from sceneInfo.
+        scene.name = this.sceneInfo.name;
         scene.animations = animationClips; // Attach AnimationClips to the scene's 'animations' property as THREE expects.
+        scene.userData.matl = this.matl; // Attach msh data for debugging
+        scene.userData.modl = this.modl;
+        scene.userData.anm2 = this.anm2;
     }
 
     /**
@@ -851,7 +860,7 @@ export class MSHLoader extends THREE.Loader {
         let byteOffset = sinf.chunkStart + 8;
         let name = "", sceneNameLength = 0, frameStart = 0, frameEnd = 100, fps = 30.0,
             rotationX = 0.0, rotationY = 0.0, rotationZ = 0.0, rotationW = 1.0, centerX = 0.0,
-            centerY = 0.0, centerZ = 0.0, extentsX = 0.0, extentsY = 0.0, extentsZ = 0.0, radius = 0.0;
+            centerY = 0.0, centerZ = 0.0, extentsX = 0.0, extentsY = 0.0, extentsZ = 0.0, radius = 0.0, string = "";
         // NAME chunk
         byteOffset += 4;
         sceneNameLength = this._readUint32LE(buffer, byteOffset);
@@ -890,6 +899,10 @@ export class MSHLoader extends THREE.Loader {
         byteOffset += 4;
         radius = this._readFloat32LE(buffer, byteOffset);
         byteOffset += 4;
+        // Compile info into single string for debugging
+        string = "NAME: " + name + "\nFRAM: " + "\n\tFrame Start: " + frameStart + "\n\tFrame End: " + frameEnd + "\n\tFPS: " + fps + "\n"
+        + "BBOX: " + "\n\tRotation: " + rotationX + ", " + rotationY + ", " + rotationZ + ", " + rotationW + "\n\tCenter: " + centerX + ", " 
+        + centerY + ", " + centerZ + "\n\tExtents: " + extentsX + ", " + extentsY + ", " + extentsZ + "\n\tRadius: " + radius;
         return {
             name,
             frameStart,
@@ -899,6 +912,7 @@ export class MSHLoader extends THREE.Loader {
             rotation: new Float32Array([rotationX, rotationY, rotationZ, rotationW]),
             center: new Float32Array([centerX, centerY, centerZ]),
             extents: new Float32Array([extentsX, extentsY, extentsZ]),
+            string
         };
     }
 
@@ -1075,6 +1089,17 @@ export class MSHLoader extends THREE.Loader {
                 }
             });
         }
+        let string = "Material Count: " + matCount;
+        for (let mat of materials) {
+            string += "\nMATD:" + "\n\tNAME: " + mat.name + "\n\tDiffuse Color: " + mat.matd.diffuseColor[0] + ", " + mat.matd.diffuseColor[1]
+            + ", " + mat.matd.diffuseColor[2] + ", " + mat.matd.diffuseColor[3] + "\n\tSpecular Color: " + mat.matd.specularColor[0]
+            + ", " + mat.matd.specularColor[1] + ", " + mat.matd.specularColor[2] + ", " + mat.matd.specularColor[3] + "\n\tAmbient Color: "
+            + mat.matd.ambientColor[0] + ", " + mat.matd.ambientColor[1] + ", " + mat.matd.ambientColor[2] + ", " + mat.matd.ambientColor[3]
+            + "\n\tSpecular Decay: " + mat.matd.shininess + "\n\tFlags: " + mat.matd.atrb.flags + "\n\tRender Type: " + mat.matd.atrb.renderType
+            + "\n\tData0: " + mat.matd.atrb.data0 + "\n\tData1: " + mat.matd.atrb.data1 + "\n\tTX0D: " + mat.matd.tx0d + "\n\tTX1D: "
+            + mat.matd.tx1d + "\n\tTX2D: " + mat.matd.tx2d + "\n\tTX3D: " + mat.matd.tx3d;
+        }
+        this.matl = { string };
         return materials;
     }
 
@@ -1665,6 +1690,36 @@ export class MSHLoader extends THREE.Loader {
                 }
             });
         }
+        let string = "";
+        for (let model of models) {
+            string += "MODL:" + "\n\tNAME: " + model.modl.name + "\n\tMTYP: " + model.modl.mtyp + "\n\tMNDX: " + model.modl.mndx
+            + "\n\tPRNT: " + model.modl.prnt + "\n\tFLGS: " + model.modl.flgs + "\n\tTRAN: " + "\n\t\tScale: " + model.modl.tran.scale[0]
+            + ", " + model.modl.tran.scale[1] + ", " + model.modl.tran.scale[2] + "\n\t\tRotation: " + model.modl.tran.rotation[0]
+            + ", " + model.modl.tran.rotation[1] + ", " + model.modl.tran.rotation[2] + ", " + model.modl.tran.rotation[3]
+            + "\n\t\tTranslation: " + model.modl.tran.translation[0] + ", " + model.modl.tran.translation[1] + ", "
+            + model.modl.tran.translation[2] + "\n";
+            if (model.modl.geom !== null) {
+                string += "\tGEOM:";
+                if (model.modl.geom.segments.length > 0) {
+                    for (let segment of model.modl.geom.segments)
+                        string += "\n\t\tSEGM:" + "\n\t\t\tMATI: " + segment.mati;
+                    string += "\n";
+                }
+                if (model.modl.geom.cloth !== null) {
+                    string += "\n\t\tCLTH:" + "\n\t\t\tCTEX: " + model.modl.geom.cloth.ctex + "\n\t\t\tFWGT:" 
+                    + "\n\t\t\t\tFixed Points Count: " + model.modl.geom.cloth.fwgt.pointCount;
+                    for (let bone of model.modl.geom.cloth.fwgt.boneNames)
+                        string += "\n\t\t\t\tBone Name: " + bone;
+                    string += "\n\t\t\tCOLL:" + "\n\t\t\t\tCollisions Count: " + model.modl.geom.cloth.coll.collisionObjCount;
+                    for (let coll of model.modl.geom.cloth.coll.collisionObjects) {
+                        string += "\n\t\t\t\tObject Name: " + coll.name + "\n\t\t\t\tParent Name: " + coll.parentName
+                        + "\n\t\t\t\tShape: " + coll.shape + "\n\t\t\t\tRadius: " + coll.radius + "\n\t\t\t\tHeight: " + coll.height
+                        + "\n\t\t\t\tWidth: " + coll.width + "\n";
+                    }
+                }
+            }
+        }
+        this.modl = { string };
         return models;
     }
 
@@ -1676,7 +1731,10 @@ export class MSHLoader extends THREE.Loader {
     // This function reads the main animation data block.
     _readAnimations(buffer) {
         let anm2 = this._findChunk(buffer, "ANM2");
-        if (!anm2) return null; // Simply return null if not found
+        if (!anm2) {
+            this.anm2 = { string: "No ANM2 chunk found." };
+            return null; // Return null if not found
+        }
         const animations = []; // List of animations found
         let byteOffset = anm2.chunkStart + 12; // Skip CYCL header
         const cyclSize = this._readUint32LE(buffer, byteOffset);
@@ -1707,6 +1765,12 @@ export class MSHLoader extends THREE.Loader {
             animations.push(anim);
         }
         byteOffset = cyclEnd;
+        let string = "CYCL:" + "\nAnimation Count: " + animationCount;
+        for (let anim of animations) {
+            string += "\n\tAnimation Name: " + anim.name + "\n\tFPS: " + anim.fps + "\n\tPlay Style: " + anim.playStyle
+            + "\n\tFirst Frame: " + anim.firstFrame + "\n\tLast Frame: " + anim.lastFrame;
+        }
+        this.anm2 = { string };
         const keyframes = []; // List of keyframes by bone
         // Next, read the KFR3 chunk to get the raw keyframe data for all bones.
         byteOffset += 4; // Skip KFR3 chunk header
@@ -1715,7 +1779,6 @@ export class MSHLoader extends THREE.Loader {
         const kfr3End = byteOffset + kfr3Size;
         const boneCount = this._readUint32LE(buffer, byteOffset);
         byteOffset += 4;
-
         // Bones in the KFR3 chunk are identified by a CRC32 hash of their name.
         // We pre-calculate the CRC for all our model names to create a fast lookup map.
         const crcToModelNameMap = new Map();
