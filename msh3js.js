@@ -29,7 +29,7 @@ import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 // Global app object/namespace for application state and data
 const msh3js = {
   // Debugging flag
-  debug: true,
+  debug: false,
   // App options
   options: {
     controlDamping: true, // orbitControls damping
