@@ -2011,9 +2011,9 @@ const msh3js = {
     const optionsProcessed = await msh3js.processOptionFiles(filesToProcess);
     const texturesProcessed = await msh3js.processTgaFiles(filesToProcess);
 
-    // Add shadow casters for imported shadowvolumes
+    // Add shadow casters for imported shadowvolumes, discover cloth collisions
     for (const msh of newMshData) {
-      if (msh.hasShadowVolume) {
+      if (msh.hasShadowVolume || msh.hasCloth) {
         if (msh3js.startOptions?.enableShadows !== false)
           msh3js.options.enableShadows = true;
         const shadowCasterClones = []; // Store clones to be added after traversal
@@ -2035,11 +2035,8 @@ const msh3js = {
               });
               shadowCasterClones.push({ clone: shadowClone, parent: childObj.parent });
               if (msh3js.debug) console.log(`processFiles::Cloned shadow volume: ${childObj.name} for shadow casting.`);
-            }
-
-            if (childObj.userData.isCloth) {
-              // The full cloth sim object will be created and pushed in initClothSimulations instead
             } else if (childObj.name.toLowerCase().startsWith("c_") && !msh3js.three.dynamic.collisionObjects.find(c => c.uuid === childObj.uuid)) {
+              // Add newly discovered cloth collisions
               msh3js.three.dynamic.collisionObjects.push(childObj);
             }
           }
@@ -2053,7 +2050,7 @@ const msh3js = {
       }
     }
 
-    // Populate dynamic material lists for render loop optimization
+    // Populate dynamic lists for render loop optimization
     for (const msh of newMshData) { // Iterate over new models
       // Add any newly discovered missing textures to our running total.
       for (const requiredTexture of msh.requiredTextures) {
@@ -2083,7 +2080,7 @@ const msh3js = {
         }
       }
     }
-    if (msh3js.debug) console.log("processFiles::Dynamic material lists populated:", msh3js.three.dynamic);
+    if (msh3js.debug) console.log("processFiles::Dynamic lists populated:", msh3js.three.dynamic);
 
     const fileProcessed = newMshData.length > 0;
 
