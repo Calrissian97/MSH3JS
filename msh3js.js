@@ -226,7 +226,7 @@ const msh3js = {
   _draggableStates: new Map(),
   // State for resizable elements, keyed by the element itself
   _resizableStates: new Map(),
-  // Is in Tauri
+  // Is in a Tauri environment
   isTauri: false,
 
   // Initializes app state and populates msh3js object
@@ -748,7 +748,7 @@ const msh3js = {
     return msh3js.stats;
   },
 
-  // Remove or add and return tweakpane pane
+  // Remove or add and return populated tweakpane pane
   async initTweakpane(enabled = true) {
     // If disposing, remove listeners from the old pane elements.
     if (msh3js._tweakpaneContainer) {
@@ -1018,6 +1018,39 @@ const msh3js = {
                     if (requiredTextures.length > 0) {
                       msh3js.addFiles(requiredTextures);
                       await msh3js.processFiles();
+                    }
+                    // If msh with cloth models
+                    if (mshData.hasCloth) {
+                      const clothMeshes = [];
+                      // If model is cloth
+                      mshData.group.traverse((child) => {
+                        if (child.isMesh && child.userData.isCloth) {
+                          clothMeshes.push(child);
+                        }
+                      });
+                      if (clothMeshes.length > 0) {
+                        const allClothParams = [];
+                        for (const mesh of clothMeshes) {
+                          // Get cloth ODF
+                          const clothODF = await msh3js._getClothODF(path, mesh.name);
+                          if (clothODF) {
+                            const clothParams = msh3js._parseClothODF(clothODF);
+                            if (clothParams.transparent)
+                              mesh.material.transparent = true;
+                            if (clothParams.hardEdge) {
+                              mesh.material.transparent = false;
+                              mesh.material.alphaTest = 0.5;
+                            }
+                            allClothParams.push(clothParams);
+                          }
+                        }
+                        for (const params of allClothParams) {
+                          if (params.windSpeed)
+                            msh3js.options.windSpeed = params.windSpeed;
+                          if (params.windDirection.length > 0)
+                            msh3js.options.clothWindDirection = params.windDirection[0];
+                        }
+                      }
                     }
                   }
                 }
@@ -2475,6 +2508,7 @@ const msh3js = {
     if (material.texture?.toLowerCase() === fileNameLower) {
       material.three.map = threeTexture;
       material.three.wireframe = false;
+      material.three.anisotropy = msh3js.options.anisotropicFiltering;
       if (msh3js.debug) console.log("applyTextureToMaterial::Cloth texture found for material:", material.name);
       material.three.needsUpdate = true;
     }
@@ -4440,6 +4474,39 @@ const msh3js = {
                         msh3js.addFiles(requiredTextures);
                         await msh3js.processFiles();
                       }
+                      // If msh with cloth models
+                      if (mshData.hasCloth) {
+                        const clothMeshes = [];
+                        // If model is cloth
+                        mshData.group.traverse((child) => {
+                          if (child.isMesh && child.userData.isCloth) {
+                            clothMeshes.push(child);
+                          }
+                        });
+                        if (clothMeshes.length > 0) {
+                          const allClothParams = [];
+                          for (const mesh of clothMeshes) {
+                            // Get cloth ODF
+                            const clothODF = await msh3js._getClothODF(path, mesh.name);
+                            if (clothODF) {
+                              const clothParams = msh3js._parseClothODF(clothODF);
+                              if (clothParams.transparent)
+                                mesh.material.transparent = true;
+                              if (clothParams.hardEdge) {
+                                mesh.material.transparent = false;
+                                mesh.material.alphaTest = 0.5;
+                              }
+                              allClothParams.push(clothParams);
+                            }
+                          }
+                          for (const params of allClothParams) {
+                            if (params.windSpeed)
+                              msh3js.options.windSpeed = params.windSpeed;
+                            if (params.windDirection.length > 0)
+                              msh3js.options.clothWindDirection = params.windDirection[0];
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -5117,6 +5184,105 @@ const msh3js = {
     return optionFile;
   },
 
+  // In a Tauri environment, this function loads the associated ODF for a cloth mesh and returns it's string contents.
+  async _getClothODF(mshPath, odfName) {
+    if (!msh3js.isTauri || !mshPath || !odfName) {
+      return null;
+    }
+    if (msh3js.debug) console.log(`_getClothODF::Searching for ODF "${odfName}" for ${mshPath}`);
+
+    let fsModule = msh3js._modules.tauriFs;
+    if (!fsModule) {
+      fsModule = await import('@tauri-apps/plugin-fs');
+      msh3js._modules.tauriFs = fsModule;
+    }
+
+    let pathModule = msh3js._modules.tauriPath;
+    if (!pathModule) {
+      pathModule = await import('@tauri-apps/api/path');
+      msh3js._modules.tauriPath = pathModule;
+    }
+
+    const { readTextFile, exists } = fsModule;
+    const { join, dirname } = pathModule;
+
+    try {
+      const mshDir = await dirname(mshPath);
+      let odfPath = null;
+
+      // Define potential locations for the ODF file
+      const pathInSameDir = await join(mshDir, `${odfName}.odf`);
+      const pathInNeighboringDir = await join(await dirname(mshDir), 'odf', `${odfName}.odf`);
+
+      if (await exists(pathInSameDir)) {
+        odfPath = pathInSameDir;
+      } else if (await exists(pathInNeighboringDir)) {
+        odfPath = pathInNeighboringDir;
+      }
+
+      if (odfPath) {
+        if (msh3js.debug) console.log(`_getClothODF::Found ODF at: ${odfPath}`);
+        return await readTextFile(odfPath);
+      } else if (msh3js.debug) {
+        console.log(`_getClothODF::ODF file not found: ${odfName}.odf`);
+      }
+    } catch (error) {
+      console.error(`_getClothODF::Error searching for ODF file for ${mshPath}:`, error);
+    }
+
+    return null;
+  },
+
+  // This function parses the ODF content to pull and return cloth ODF parameters
+  _parseClothODF(content) {
+    let windDirection = [];
+    let windSpeed = null;
+    let hardEdge = false;
+    let transparent = false;
+
+    if (content) {
+      const lines = content.split(/\r?\n/);
+      for (const line of lines) {
+        // Remove comments from the line first
+        const lineWithoutComment = line.split('//')[0];
+        // Regex to match "key = value" format, ignoring case and spaces.
+        const match = lineWithoutComment.match(/^\s*([a-zA-Z0-9_]+)\s*=\s*"?([^"\n;]*)"?/i);
+        if (match) {
+          const key = match[1].toLowerCase();
+          const value = match[2].trim();
+          // Parse each cloth parameter value
+          switch (key) {
+            case 'winddirection':
+              windDirection = value.split(/\s+/)
+                .map(v => parseFloat(v))
+                .filter(v => !isNaN(v))
+                .slice(0, 2);
+              break;
+            case 'windspeed':
+              windSpeed = parseFloat(value);
+              break;
+            case 'hardedge':
+              hardEdge = value === '1';
+              break;
+            case 'transparent':
+              transparent = value === '1';
+              break;
+          }
+        }
+      }
+    }
+
+    const clothParams = {
+      windDirection, // Horizontal angle in degrees, vertical angle in degrees
+      windSpeed,     // Float value of wind speed
+      hardEdge,      // Either fully opaque or fully transparent
+      transparent    // Interpreted as transparent by gradient
+    };
+    if (msh3js.debug) console.log("_parseClothODF: Cloth ODF parsed:", clothParams);
+
+    return clothParams;
+  },
+
   // Toggles the camera between perspective and orthographic views.
   _toggleCameraType() {
     if (!msh3js.three.camera || !msh3js.three.orbitControls) return;
@@ -5237,6 +5403,39 @@ const msh3js = {
                 if (requiredTextures.length > 0) {
                   msh3js.addFiles(requiredTextures);
                   await msh3js.processFiles();
+                }
+                // If msh with cloth models
+                if (mshData.hasCloth) {
+                  const clothMeshes = [];
+                  // If model is cloth
+                  mshData.group.traverse((child) => {
+                    if (child.isMesh && child.userData.isCloth) {
+                      clothMeshes.push(child);
+                    }
+                  });
+                  if (clothMeshes.length > 0) {
+                    const allClothParams = [];
+                    for (const mesh of clothMeshes) {
+                      // Get cloth ODF
+                      const clothODF = await msh3js._getClothODF(path, mesh.name);
+                      if (clothODF) {
+                        const clothParams = msh3js._parseClothODF(clothODF);
+                        if (clothParams.transparent)
+                          mesh.material.transparent = true;
+                        if (clothParams.hardEdge) {
+                          mesh.material.transparent = false;
+                          mesh.material.alphaTest = 0.5;
+                        }
+                        allClothParams.push(clothParams);
+                      }
+                    }
+                    for (const params of allClothParams) {
+                      if (params.windSpeed)
+                        msh3js.options.windSpeed = params.windSpeed;
+                      if (params.windDirection.length > 0)
+                        msh3js.options.clothWindDirection = params.windDirection[0];
+                    }
+                  }
                 }
               }
             }
