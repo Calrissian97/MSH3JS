@@ -1,6 +1,6 @@
 [package]
 name = "msh3js_tauri"
-version = "1.0.6"
+version = "1.0.7"
 description = "Three.js model viewer for MSH files (Mesh format for the classic Star Wars Battlefront games)"
 authors = ["Landon Hull aka Calrissian97"]
 license = "GPL-3.0"
