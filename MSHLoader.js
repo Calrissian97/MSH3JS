@@ -654,10 +654,8 @@ export class MSHLoader extends THREE.Loader {
                     const clothMat = new THREE.MeshPhongMaterial({
                         name: "clothMaterial_" + cloth.name,
                         shininess: 0.0,
-                        transparent: true,
                         side: THREE.DoubleSide,
                         wireframe: true,
-                        vertexColors: true,
                     });
                     const material = { name: "clothMaterial_" + cloth.name, three: clothMat, texture: cloth.ctex };
                     this.materials.push(material);
