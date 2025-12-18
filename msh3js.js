@@ -15,7 +15,6 @@ import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 //import "tweakpane-plugin-html-color-picker";
 //import Stats from "stats-gl";
 //import "webgl-lint";
-//import { MeshBVH } from "three-mesh-bvh";
 //import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 //import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 //import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
@@ -25,6 +24,7 @@ import { RGBELoader } from "three/addons/loaders/RGBELoader.js";
 //import { emit, listen } from "@tauri-apps/api/event";
 //import { open } from "@tauri-apps/plugin-dialog";
 //import { readFile, readTextFile, exists } from "@tauri-apps/plugin-fs";
+//import { OBB } from "three/addons/math/OBB.js";
 
 // Global app object/namespace for application state and data
 const msh3js = {
@@ -1035,20 +1035,31 @@ const msh3js = {
                           const clothODF = await msh3js._getClothODF(path, mesh.name);
                           if (clothODF) {
                             const clothParams = msh3js._parseClothODF(clothODF);
-                            if (clothParams.transparent)
+                            if (clothParams.transparent) {
                               mesh.material.transparent = true;
+                              if (msh3js.debug)
+                                console.log("tweakpane:Upload:Cloth mesh", mesh.name, " material flagged as transparent.");
+                            }
                             if (clothParams.hardEdge) {
                               mesh.material.transparent = false;
                               mesh.material.alphaTest = 0.5;
+                              if (msh3js.debug)
+                                console.log("tweakpane:Upload:Cloth mesh", mesh.name, " material flagged as hard edge.");
                             }
                             allClothParams.push(clothParams);
                           }
                         }
                         for (const params of allClothParams) {
-                          if (params.windSpeed)
-                            msh3js.options.windSpeed = params.windSpeed;
-                          if (params.windDirection.length > 0)
+                          if (params.windSpeed) {
+                            msh3js.options.clothWindSpeed = params.windSpeed * 0.1;
+                            if (msh3js.debug)
+                              console.log("tweakpane:Upload:Cloth wind speed set to:", msh3js.options.clothWindSpeed);
+                          }
+                          if (params.windDirection.length > 0) {
                             msh3js.options.clothWindDirection = params.windDirection[0];
+                            if (msh3js.debug)
+                              console.log("tweakpane:Upload:Cloth wind direction set to:", msh3js.options.clothWindDirection);
+                          }
                         }
                       }
                     }
@@ -1062,7 +1073,7 @@ const msh3js = {
         })();
       } else msh3js.clickFileInput();
 
-      if (msh3js.debug) console.log("tweakpane::Upload button clicked.");
+      if (msh3js.debug) console.log("tweakpane:Upload button clicked.");
     }).element.title = "Upload new MSH, TGA, or .msh.option files.";
 
     // --- Scene Tab ---
@@ -3860,21 +3871,13 @@ const msh3js = {
   async initClothSimulations() {
     if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
 
-    let MeshBVH;
-    if (msh3js._modules.MeshBVH) {
-      MeshBVH = msh3js._modules.MeshBVH.MeshBVH;
-    } else {
-      try {
-        const bvhModule = await import("three-mesh-bvh");
-        msh3js._modules.MeshBVH = bvhModule;
-        MeshBVH = msh3js._modules.MeshBVH.MeshBVH;
-        if (msh3js.debug) {
-          console.log("initClothSimulations::MeshBVH module dynamically imported.");
-        }
-      } catch (e) {
-        console.error("initClothSimulations::Failed to import MeshBVH:", e);
-        return; // Can't proceed without BVH
-      }
+    let OBB;
+    if (msh3js._modules.OBB)
+      OBB = msh3js._modules.OBB;
+    else {
+      const obbModule = await import("three/addons/math/OBB.js");
+      OBB = obbModule.OBB;
+      msh3js._modules.OBB = OBB;
     }
 
     // Process all MSH files, but only add new cloth simulations
@@ -3891,12 +3894,7 @@ const msh3js = {
         }
       });
 
-      // Build BVH for all collision objects
-      for (const collisionObj of msh3js.three.dynamic.collisionObjects) {
-        // The BVH is stored on the geometry for later access
-        collisionObj.geometry.boundsTree = new MeshBVH(collisionObj.geometry);
-      }
-      // Now, create simulations for the newly found cloth meshes
+      // Create simulations for the newly found cloth meshes
       for (const clothMesh of clothMeshes) {
         const geometry = clothMesh.geometry;
         const positionAttr = geometry.getAttribute('position');
@@ -4040,11 +4038,28 @@ const msh3js = {
         if (clothData?.coll?.collisionObjects) {
           for (const collRef of clothData.coll.collisionObjects) {
             const collObjectName = collRef.name.toLowerCase();
+            const shape = collRef.shape;
             // Find the actual collision object in the global list.
             const collisionObj = msh3js.three.dynamic.collisionObjects.find(
               (obj) => obj.name.toLowerCase() === collObjectName
             );
+
             if (collisionObj) {
+              let collider = null;
+              // Pre-compute the bounding volume based on the shape type from the MSH data.
+              if (shape === 0) { // Sphere
+                if (!collisionObj.geometry.boundingSphere)
+                  collisionObj.geometry.computeBoundingSphere();
+                collider = new THREE.Sphere();
+
+              } else if (shape === 1 || shape === 2) { // Cylinder or Box
+                if (!collisionObj.geometry.boundingBox)
+                  collisionObj.geometry.computeBoundingBox();
+                collider = new OBB();
+              }
+
+              collisionObj.userData.shape = shape;
+              collisionObj.userData.collider = collider;
               specificCollisionObjects.push(collisionObj);
             }
           }
@@ -4071,40 +4086,10 @@ const msh3js = {
     }
   },
 
-  // Reset cloth simulations
-  resetClothSimulations() {
-    if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
-
-    if (msh3js.three.dynamic.clothMeshes.length > 0) {
-      for (const clothSim of msh3js.three.dynamic.clothMeshes) {
-        const geometry = clothSim.mesh.geometry;
-        const positionAttr = geometry.getAttribute('position');
-
-        for (let i = 0; i < clothSim.particles.length; i++) {
-          const particle = clothSim.particles[i];
-          positionAttr.setXYZ(
-            i,
-            particle.originalPosition.x,
-            particle.originalPosition.y,
-            particle.originalPosition.z
-          );
-          particle.position.copy(particle.originalPosition);
-          particle.previousPosition.copy(particle.originalPosition);
-          particle.velocity.set(0, 0, 0);
-        }
-
-        positionAttr.needsUpdate = true;
-        geometry.computeVertexNormals();
-      }
-      // Clear the list after resetting all simulations
-      msh3js.three.dynamic.clothMeshes = [];
-    }
-  },
-
   // Update cloth simulation (Verlet integration)
   updateClothSimulation(clothSim, deltaTime) {
     const dt = Math.min(deltaTime, 0.016);
-    const iterations = 3; // Constraint relaxation iterations
+    const iterations = 1; // Constraint relaxation iterations
     const gravityStrength = 9.8;
     const damping = 0.95;
 
@@ -4164,18 +4149,60 @@ const msh3js = {
     }
 
     for (const collisionObj of clothSim.collisionObjects) {
-      const boundingSphere = new THREE.Sphere();
-      collisionObj.geometry.computeBoundingSphere();
-      boundingSphere.copy(collisionObj.geometry.boundingSphere);
-      boundingSphere.applyMatrix4(collisionObj.matrixWorld);
+      collisionObj.updateMatrixWorld(true);
+      let collider = collisionObj.userData.collider;
+
+      // Correctly update the collider's position and orientation for this frame
+      if (collisionObj.userData.shape === 0) { // Sphere
+        // Recalculate the sphere's world position each frame
+        collider.copy(collisionObj.geometry.boundingSphere).applyMatrix4(collisionObj.matrixWorld);
+      } else { // OBB
+        // Recalculate the OBB's world position each frame
+        collider.fromBox3(collisionObj.geometry.boundingBox).applyMatrix4(collisionObj.matrixWorld);
+      }
 
       for (const particle of clothSim.particles) {
         if (particle.fixed) continue;
 
-        const distance = particle.position.distanceTo(boundingSphere.center);
-        if (distance < boundingSphere.radius) {
-          const normal = particle.position.clone().sub(boundingSphere.center).normalize();
-          particle.position.copy(boundingSphere.center).add(normal.multiplyScalar(boundingSphere.radius));
+        if (collisionObj.userData.shape === 0) {
+          const distance = particle.position.distanceTo(collider.center);
+          if (distance < collider.radius) {
+            const normal = particle.position.clone().sub(collider.center).normalize();
+            particle.position.copy(collider.center).add(normal.multiplyScalar(collider.radius));
+          }
+        } else if (collisionObj.userData.shape === 1 || collisionObj.userData.shape === 2) {
+          if (collider.containsPoint(particle.position)) {
+            // Transform particle to OBB local space
+            const localPos = particle.position.clone().sub(collider.center);
+            const invRot = new THREE.Matrix3().copy(collider.rotation).transpose();
+            localPos.applyMatrix3(invRot);
+
+            // Compute distances to each face (positive values indicate inside)
+            const dxMin = collider.halfSize.x + localPos.x;
+            const dxMax = collider.halfSize.x - localPos.x;
+            const dyMin = collider.halfSize.y + localPos.y;
+            const dyMax = collider.halfSize.y - localPos.y;
+            const dzMin = collider.halfSize.z + localPos.z;
+            const dzMax = collider.halfSize.z - localPos.z;
+
+            // Find the minimum positive distance (nearest face)
+            let minDist = Infinity;
+            let pushNormal = new THREE.Vector3(); // Local space normal of nearest face
+            if (dxMin > 0 && dxMin < minDist) { minDist = dxMin; pushNormal.set(-1, 0, 0); }
+            if (dxMax > 0 && dxMax < minDist) { minDist = dxMax; pushNormal.set(1, 0, 0); }
+            if (dyMin > 0 && dyMin < minDist) { minDist = dyMin; pushNormal.set(0, -1, 0); }
+            if (dyMax > 0 && dyMax < minDist) { minDist = dyMax; pushNormal.set(0, 1, 0); }
+            if (dzMin > 0 && dzMin < minDist) { minDist = dzMin; pushNormal.set(0, 0, -1); }
+            if (dzMax > 0 && dzMax < minDist) { minDist = dzMax; pushNormal.set(0, 0, 1); }
+
+            if (minDist < Infinity) {
+              // Apply push in local space, then transform back to world
+              const pushVec = pushNormal.multiplyScalar(minDist + 1e-4); // Add epsilon to avoid re-penetration
+              localPos.add(pushVec);
+              localPos.applyMatrix3(collider.rotation);
+              particle.position.copy(collider.center).add(localPos);
+            }
+          }
         }
       }
     }
@@ -4192,6 +4219,36 @@ const msh3js = {
 
     positionAttr.needsUpdate = true;
     geometry.computeVertexNormals();
+  },
+
+  // Reset cloth simulations
+  resetClothSimulations() {
+    if (!msh3js.three.msh || msh3js.three.msh.length === 0) return;
+
+    if (msh3js.three.dynamic.clothMeshes.length > 0) {
+      for (const clothSim of msh3js.three.dynamic.clothMeshes) {
+        const geometry = clothSim.mesh.geometry;
+        const positionAttr = geometry.getAttribute('position');
+
+        for (let i = 0; i < clothSim.particles.length; i++) {
+          const particle = clothSim.particles[i];
+          positionAttr.setXYZ(
+            i,
+            particle.originalPosition.x,
+            particle.originalPosition.y,
+            particle.originalPosition.z
+          );
+          particle.position.copy(particle.originalPosition);
+          particle.previousPosition.copy(particle.originalPosition);
+          particle.velocity.set(0, 0, 0);
+        }
+
+        positionAttr.needsUpdate = true;
+        geometry.computeVertexNormals();
+      }
+      // Clear the list after resetting all simulations
+      msh3js.three.dynamic.clothMeshes = [];
+    }
   },
 
   // Plays a specific animation by name
@@ -4438,7 +4495,7 @@ const msh3js = {
             const appWindow = getCurrentWindow();
             appWindow.onDragDropEvent(async (event) => {
               if (event.payload.type === 'drop') {
-                if (msh3js.debug) console.log("manageListeners::Tauri file drop event received:", event.payload.paths);
+                if (msh3js.debug) console.log("manageListeners:fileDropCanvas:Tauri file drop event received:", event.payload.paths);
                 const files = [];
                 const mshPaths = [];
                 for (const path of event.payload.paths) {
@@ -4490,20 +4547,31 @@ const msh3js = {
                             const clothODF = await msh3js._getClothODF(path, mesh.name);
                             if (clothODF) {
                               const clothParams = msh3js._parseClothODF(clothODF);
-                              if (clothParams.transparent)
+                              if (clothParams.transparent) {
                                 mesh.material.transparent = true;
+                                if (msh3js.debug)
+                                  console.log("manageListeners:fileDropCanvas: Cloth mesh ", mesh.name, " flagged as transparent.");
+                              }
                               if (clothParams.hardEdge) {
                                 mesh.material.transparent = false;
                                 mesh.material.alphaTest = 0.5;
+                                if (msh3js.debug)
+                                  console.log("manageListeners:fileDropCanvas: Cloth mesh ", mesh.name, " flagged as hardEdge.");
                               }
                               allClothParams.push(clothParams);
                             }
                           }
                           for (const params of allClothParams) {
-                            if (params.windSpeed)
-                              msh3js.options.windSpeed = params.windSpeed;
-                            if (params.windDirection.length > 0)
+                            if (params.windSpeed) {
+                              msh3js.options.clothWindSpeed = params.windSpeed * 0.1;
+                              if (msh3js.debug)
+                                console.log("manageListeners:fileDropCanvas: Setting cloth wind speed to ", msh3js.options.clothWindSpeed);
+                            }
+                            if (params.windDirection.length > 0) {
                               msh3js.options.clothWindDirection = params.windDirection[0];
+                              if (msh3js.debug)
+                                console.log("manageListeners:fileDropCanvas: Setting cloth wind direction to ", msh3js.options.clothWindDirection);
+                            }
                           }
                         }
                       }
@@ -5420,20 +5488,31 @@ const msh3js = {
                       const clothODF = await msh3js._getClothODF(path, mesh.name);
                       if (clothODF) {
                         const clothParams = msh3js._parseClothODF(clothODF);
-                        if (clothParams.transparent)
+                        if (clothParams.transparent) {
                           mesh.material.transparent = true;
+                          if (msh3js.debug)
+                            console.log(`_getLaunchFiles::Cloth mesh "${mesh.name}" flagged as transparent from ODF.`);
+                        }
                         if (clothParams.hardEdge) {
                           mesh.material.transparent = false;
                           mesh.material.alphaTest = 0.5;
+                          if (msh3js.debug)
+                            console.log(`_getLaunchFiles::Cloth mesh "${mesh.name}" flagged as hard edge from ODF.`);
                         }
                         allClothParams.push(clothParams);
                       }
                     }
                     for (const params of allClothParams) {
-                      if (params.windSpeed)
-                        msh3js.options.windSpeed = params.windSpeed;
-                      if (params.windDirection.length > 0)
+                      if (params.windSpeed) {
+                        msh3js.options.clothWindSpeed = params.windSpeed * 0.1;
+                        if (msh3js.debug)
+                          console.log(`_getLaunchFiles::Cloth wind speed set to ${msh3js.options.clothWindSpeed}.`);
+                      }
+                      if (params.windDirection.length > 0) {
                         msh3js.options.clothWindDirection = params.windDirection[0];
+                        if (msh3js.debug)
+                          console.log(`_getLaunchFiles::Cloth wind direction set to ${msh3js.options.clothWindDirection}.`);
+                      }
                     }
                   }
                 }
