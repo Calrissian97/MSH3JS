@@ -1,9 +1,11 @@
 ![App Logo](https://calrissian97.github.io/MSH3JS/android-chrome-192x192.png)
 # MSH3JS - 3D Model Viewer
-MSH3JS is a feature-rich 3D model viewer built with **three.js** r151, specifically designed to render `.msh` files used by Pandemic Studios for their Star Wars Battlefront games as an intermediate mesh format. It supports all in-game material rendertypes, skeletal animations, and can be run as a standalone web application in any modern browser supporting webGL or a Windows (7+) desktop application via Tauri 2.0.
+MSH3JS is a feature-rich 3D model viewer built with **three.js** r151, specifically designed to render `.msh` files used by Pandemic Studios for their Star Wars Battlefront games as an intermediate mesh format. It supports all in-game material rendertypes, skeletal animations, and can be run as a standalone web application in any modern browser supporting webGL or as a Windows (7+) desktop application or Linux AppImage via Tauri 2.0.
 
 ## 🚀 Live Webapp
 Check out the live version here: **[calrissian97.github.io/MSH3JS/](https://calrissian97.github.io/MSH3JS/)**
+This mobile-friendly version requires at least webGL1 hardware and browser support, and lacks features of the Tauri release due to browser restrictions.
+Features you'll be missing are: Auto-uploading of required textures, .option files, cloth ODFs for cloth simulation parameters, and transparent windows. All other features are preserved!
 
 ## 💾 Desktop Application
 Binaries for the Windows desktop application can be found in the **[Releases](https://github.com/Calrissian97/MSH3JS/releases)** section of this repository, available as portable executables or installers for arm64 and x64 architectures.
@@ -13,7 +15,8 @@ Binaries for the Windows desktop application can be found in the **[Releases](ht
 -   **File Support**:
     -   **Models**: Parses `.msh` 3D models with a custom ThreeJS loader, MSHLoader.
     -   **Textures**: Loads `.tga` textures and cubemaps, with support for `.hdr` and `.exr` environment maps.
-    -   **Option Flags**: Parses `.msh.option` files to apply flags like -bump, -scale, -hardskinonly, and -hiresshadow to the model.
+    -   **Option Files**: Parses `.msh.option` files to apply flags like -bump, -scale, -hardskinonly, and -hiresshadow to the model.
+    -   **ODF Files**: Parses cloth ODF files to pull cloth material and wind parameters for cloth simulation.
 -   **Multiple files**:
     -   **Scene Creation**: Multiple msh files can be uploaded with controls for their position, rotation, and scale.
     -   **Weapon Preview**: If a unit and weapon model are uploaded the weapon mesh will be constrained to the unit model (hp_weapons in unit msh, hp_active in weapon msh required).
