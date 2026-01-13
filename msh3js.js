@@ -116,6 +116,8 @@ const msh3js = {
     gridHelper: null,
     // Three.JS view gizmo
     viewHelper: null,
+    // "Fake" skeleton containing only bones for viewing
+    viewSkeleton: null,
     // Skeleton helper
     skeletonHelper: null,
     // Three.JS cube camera for refraction envmap
@@ -1875,6 +1877,24 @@ const msh3js = {
     // If there's a mixer, update it. The speed is handled by mixer.timeScale.
     if (msh3js.three.mixer) msh3js.three.mixer.update(elapsedTime);
 
+    // Update skeleton helper animation
+    if (msh3js.options.showSkeleton && msh3js.three.viewSkeleton && msh3js.three.viewSkeleton.userData.boneMap) {
+      const mshGroup = msh3js.three.viewSkeleton.parent;
+      if (mshGroup) {
+        mshGroup.updateMatrixWorld(true);
+        
+        const invMatrix = new THREE.Matrix4();
+        const localMatrix = new THREE.Matrix4();
+        
+        for (const { copy, original, relativeParent } of msh3js.three.viewSkeleton.userData.boneMap) {
+          invMatrix.copy(relativeParent.matrixWorld).invert();
+          localMatrix.copy(invMatrix).multiply(original.matrixWorld);
+          localMatrix.decompose(copy.position, copy.quaternion, copy.scale);
+        }
+        msh3js.three.viewSkeleton.updateMatrixWorld(true);
+      }
+    }
+
     // --- Update Dynamic Materials ---
     // Handle scrolling textures
     for (const material of msh3js.three.dynamic.scrollingMaterials) {
@@ -2817,17 +2837,76 @@ const msh3js = {
 
     for (const msh of msh3js.three.msh) {
       if (msh.hasSkeleton) {
+        // Create a "fake" skeleton hierarchy for visualization
+        const viewSkeleton = new THREE.Group();
+        viewSkeleton.name = "viewSkeleton";
+        msh.group.add(viewSkeleton);
+        msh3js.three.viewSkeleton = viewSkeleton;
+        
+        // Initialize mapping array for animation sync
+        msh3js.three.viewSkeleton.userData.boneMap = [];
+
+        msh.group.updateMatrixWorld(true);
+
+        const boneMap = new Map();
+        const originalBones = [];
+
+        // 1. Identify all bone objects
         msh.group.traverse((child) => {
-          if (child.isSkinnedMesh && !msh3js.three.skeletonHelper) {
-            msh3js.three.scene.updateMatrixWorld(true);
-            const helper = new THREE.SkeletonHelper(child);
-            helper.name = "skeletonHelper";
-            helper.visible = msh3js.options.showSkeleton;
-            msh3js.three.scene.add(helper);
-            msh3js.three.skeletonHelper = helper;
+          if (child.name.toLowerCase().startsWith("bone")) {
+            const boneCopy = new THREE.Bone();
+            boneCopy.name = child.name;
+            boneMap.set(child.uuid, boneCopy);
+            originalBones.push(child);
           }
         });
-        if (msh3js.three.skeletonHelper) break; // Stop after creating one.
+
+        // 2. Reconstruct the hierarchy
+        originalBones.forEach((originalBone) => {
+          const boneCopy = boneMap.get(originalBone.uuid);
+
+          // Find the nearest ancestor that is also a bone
+          let parent = originalBone.parent;
+          let parentCopy = null;
+          while (parent && parent !== msh.group) {
+            if (boneMap.has(parent.uuid)) {
+              parentCopy = boneMap.get(parent.uuid);
+              break;
+            }
+            parent = parent.parent;
+          }
+
+          // Store mapping for animation sync
+          const relativeParent = parentCopy ? parent : msh.group;
+          msh3js.three.viewSkeleton.userData.boneMap.push({
+             copy: boneCopy,
+             original: originalBone,
+             relativeParent: relativeParent
+          });
+
+          // Calculate the transform relative to the new parent
+          const parentMatrixWorld = relativeParent.matrixWorld;
+          const invParentMatrixWorld = parentMatrixWorld.clone().invert();
+          const localMatrix = invParentMatrixWorld.multiply(originalBone.matrixWorld);
+
+          localMatrix.decompose(boneCopy.position, boneCopy.quaternion, boneCopy.scale);
+
+          if (parentCopy) {
+            parentCopy.add(boneCopy);
+          } else {
+            viewSkeleton.add(boneCopy);
+          }
+        });
+
+        viewSkeleton.updateMatrixWorld(true);
+
+        const helper = new THREE.SkeletonHelper(viewSkeleton);
+        helper.name = "skeletonHelper";
+        helper.visible = msh3js.options.showSkeleton;
+        msh3js.three.scene.add(helper);
+        msh3js.three.skeletonHelper = helper;
+
+        break; // Stop after creating one.
       }
     }
   },
