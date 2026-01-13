@@ -1488,7 +1488,8 @@ const msh3js = {
     // Create a proxy object to display the animation status as a string.
     const statusProxy = {
       get status() {
-        return msh3js.ui.animationPlaying ? "Playing" : "Stopped";
+        if (!msh3js.ui.animationPlaying) return "Stopped";
+        return (msh3js.three.mixer && msh3js.three.mixer.timeScale === 0) ? "Paused" : "Playing";
       }
     };
     // Show animation playback status
@@ -1497,14 +1498,52 @@ const msh3js = {
       readonly: true,
     }).element.title = "Current status of the animation playback.";
 
-    // Add buttons for starting/stopping
+    // Play currently selected animation
     animationsPlaybackFolder.addButton({ title: "Play" }).on("click", () => {
       if (msh3js.ui.currentAnimation !== 'None') {
+        if (msh3js.ui.animationPlaying && msh3js.three.mixer && msh3js.three.mixer.timeScale === 0) {
+          msh3js.three.mixer.timeScale = msh3js.ui.animationSpeed;
+          if (msh3js.debug) console.log("tweakpane::Animation playback resumed.");
+          msh3js.pane.refresh();
+          return;
+        }
         msh3js.playAnimation(msh3js.ui.currentAnimation);
         if (msh3js.debug) console.log("tweakpane::Animation playback started for:", msh3js.ui.currentAnimation);
       }
     }).element.title = "Play the selected animation.";
 
+    // Pause currently playing animation at current frame
+    animationsPlaybackFolder.addButton({ title: "Pause" }).on("click", () => {
+      if (msh3js.three.mixer && msh3js.ui.animationPlaying) {
+        msh3js.three.mixer.timeScale = 0;
+        if (msh3js.debug) console.log("tweakpane::Animation paused.");
+        msh3js.pane.refresh();
+      }
+    }).element.title = "Pause the currently playing animation.";
+
+    // If paused, decrement one frame
+    animationsPlaybackFolder.addButton({ title: "Previous Frame" }).on("click", () => {
+      if (msh3js.three.mixer && msh3js.ui.animationPlaying && msh3js.three.mixer.timeScale === 0) {
+        const step = -1 / 30; // Assume 30 FPS
+        msh3js.three.mixer.timeScale = 1;
+        msh3js.three.mixer.update(step);
+        msh3js.three.mixer.timeScale = 0;
+        if (msh3js.debug) console.log("tweakpane::Animation stepped back 1 frame.");
+      }
+    }).element.title = "Step backward one frame (When paused).";
+
+    // If paused, increment one frame
+    animationsPlaybackFolder.addButton({ title: "Next Frame" }).on("click", () => {
+      if (msh3js.three.mixer && msh3js.ui.animationPlaying && msh3js.three.mixer.timeScale === 0) {
+        const step = 1 / 30; // Assume 30 FPS
+        msh3js.three.mixer.timeScale = 1;
+        msh3js.three.mixer.update(step);
+        msh3js.three.mixer.timeScale = 0;
+        if (msh3js.debug) console.log("tweakpane::Animation stepped forward 1 frame.");
+      }
+    }).element.title = "Step forward one frame (When paused).";
+
+    // Stop current animation playback and reset
     animationsPlaybackFolder.addButton({ title: "Stop" }).on("click", () => {
       msh3js.stopAllAnimations(false);
       if (msh3js.debug) console.log("tweakpane::Animation playback stopped.");
