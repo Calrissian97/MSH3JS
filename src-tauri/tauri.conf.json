@@ -4,7 +4,7 @@
     "fs": {}
   },
   "productName": "msh3js_tauri",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "identifier": "msh3js-tauri.io.github.calrissian97",
   "build": {
     "frontendDist": "../dist",
