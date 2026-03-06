@@ -1,6 +1,6 @@
 {
   "name": "msh3js",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "Three.js model viewer for MSH files (Mesh format for the classic Star Wars Battlefront games).",
   "license": "GPL-3.0-only",
   "author": "Landon Hull aka Calrissian97",
@@ -13,17 +13,17 @@
     "build:web": "node build.js"
   },
   "dependencies": {
-    "stats-gl": "3.8.0",
+    "stats-gl": "4.1.0",
     "three": "0.151.0",
     "tweakpane": "4.0.5",
     "tweakpane-plugin-html-color-picker": "1.0.0",
     "webgl-lint": "1.11.4"
   },
   "devDependencies": {
-    "@tauri-apps/api": "^2.9.1",
-    "@tauri-apps/cli": "^2.9.6",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.1",
     "@tauri-apps/plugin-fs": "^2.4.5",
-    "@tauri-apps/plugin-dialog": "^2.5.0",
-    "esbuild": "^0.27.2"
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "esbuild": "^0.27.3"
   }
 }
