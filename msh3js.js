@@ -62,7 +62,8 @@ const msh3js = {
     bloomStrength: 1.5, // Bloom strength
     bloomRadius: 0.1, // Bloom radius
     bloomThreshold: 0.0, // Bloom threshold
-    showStats: false, // Show stats flag
+    showRenderingStats: false, // Show rendering stats flag
+    showMeshStats: false, // Show mesh stats flag
     showSkeleton: false, // Show skeleton helper
     clothSim: false, // Enable cloth simulation
     clothWindSpeed: 2.0, // Wind speed for cloth simulation
@@ -160,6 +161,7 @@ const msh3js = {
     animationPlaying: false,
     animationLoop: true,
     missingTextures: new Set(),
+    meshStatsControls: [],
   },
   // App rendering time
   renderTime: 0.0,
@@ -339,7 +341,7 @@ const msh3js = {
     }
 
     assignOption('enableShadows', options.enableShadows, isBoolean);
-    assignOption('showStats', options.displayStats, isBoolean);
+    assignOption('showRenderingStats', options.displayStats, isBoolean);
     assignOption('displayTweakpane', options.displayTweakpane, isBoolean);
 
     if (options.GPU != null && ['default', 'low-power', 'high-performance'].includes(options.GPU)) {
@@ -683,9 +685,9 @@ const msh3js = {
     msh3js.three.dirLight2.intensity = msh3js.options.dirLight2Intensity;
 
     // Optionally set up stats and tweakpane if needed
-    if (msh3js.debug === true) msh3js.options.showStats = true;
-    if (msh3js.options.showStats !== false) {
-      await msh3js.initStats(msh3js.options.showStats);
+    if (msh3js.debug === true) msh3js.options.showRenderingStats = true;
+    if (msh3js.options.showRenderingStats !== false) {
+      await msh3js.initStats(msh3js.options.showRenderingStats);
     }
     if (msh3js.options.displayTweakpane !== false) {
       await msh3js.initTweakpane(options.displayTweakpane);
@@ -787,6 +789,7 @@ const msh3js = {
     // Initialize the main Tweakpane instance and register the imported plugins.
     const pane = new Pane({ title: "Controls", expanded: true, container: msh3js._tweakpaneContainer }); // Main pane
     pane.registerPlugin(TweakpanePluginHtmlColorPicker);
+    msh3js.ui.meshStatsControls = []; // Reset stats controls list
     // Create the main tab layout for organizing controls.
     const tab = pane.addTab({
       pages: [
@@ -849,11 +852,49 @@ const msh3js = {
 
       if (modelsInMsh.length > 0) {
         const mshModelsFolder = mshFolder.addFolder({ title: "Models", expanded: false });
+        // Calculate total mesh stats
+        let totalVertices = 0;
+        let totalTriangles = 0;
+        for (const model of modelsInMsh) {
+          if (model.geometry) {
+            totalVertices += model.geometry.attributes.position.count;
+            if (model.geometry.index) {
+              totalTriangles += model.geometry.index.count / 3;
+            } else {
+              totalTriangles += model.geometry.attributes.position.count / 3;
+            }
+          }
+        }
+        const totalStats = { Vertices: totalVertices, Triangles: totalTriangles };
+        const totalVertsBinding = mshModelsFolder.addBinding(totalStats, 'Vertices', { label: "Total Vertices", readonly: true, format: (v) => v.toLocaleString(), hidden: !msh3js.options.showMeshStats });
+        totalVertsBinding.element.title = "The total number of vertices in all imported models.";
+        const totalTrisBinding = mshModelsFolder.addBinding(totalStats, 'Triangles', { label: "Total Triangles", readonly: true, format: (v) => v.toLocaleString(), hidden: !msh3js.options.showMeshStats });
+        totalTrisBinding.element.title = "The total number of triangles in all imported models.";
+        msh3js.ui.meshStatsControls.push(totalVertsBinding, totalTrisBinding);
+
         for (const model of modelsInMsh) {
           const modelFolder = mshModelsFolder.addFolder({ title: model.name, expanded: false });
           if (!model.userData.originalPosition) model.userData.originalPosition = model.position.clone();
           if (!model.userData.originalRotation) model.userData.originalRotation = model.rotation.clone();
           if (!model.userData.originalScale) model.userData.originalScale = model.scale.clone();
+
+          // Calculate individual stats
+          let mVertices = 0;
+          let mTriangles = 0;
+          if (model.geometry) {
+            mVertices = model.geometry.attributes.position.count;
+            if (model.geometry.index) {
+              mTriangles = model.geometry.index.count / 3;
+            } else {
+              mTriangles = model.geometry.attributes.position.count / 3;
+            }
+          }
+          const modelStats = { Vertices: mVertices, Triangles: mTriangles };
+          const mVertsBinding = modelFolder.addBinding(modelStats, 'Vertices', { readonly: true, format: (v) => v.toLocaleString(), hidden: !msh3js.options.showMeshStats });
+          mVertsBinding.element.title = "The number of vertices in this model.";
+          const mTrisBinding = modelFolder.addBinding(modelStats, 'Triangles', { readonly: true, format: (v) => v.toLocaleString(), hidden: !msh3js.options.showMeshStats });
+          mTrisBinding.element.title = "The number of triangles in this model.";
+          msh3js.ui.meshStatsControls.push(mVertsBinding, mTrisBinding);
 
           modelFolder.addBinding(model, "visible", { label: "Visible" }).element.title = "Toggle the visibility of this model.";
 
@@ -1667,12 +1708,12 @@ const msh3js = {
 
     // Stats toggle to show/hide the performance monitor.
     renderingFolder
-      .addBinding(msh3js.options, "showStats", {
-        label: "Show Stats",
+      .addBinding(msh3js.options, "showRenderingStats", {
+        label: "Show Rendering Stats",
       })
       .on("change", async () => {
-        await msh3js.initStats(msh3js.options.showStats); // Toggle stats
-        if (msh3js.debug) console.log("tweakpane::Show stats set to:", msh3js.options.showStats);
+        await msh3js.initStats(msh3js.options.showRenderingStats); // Toggle stats
+        if (msh3js.debug) console.log("tweakpane::Show stats set to:", msh3js.options.showRenderingStats);
       }).element.title = "Show or hide the performance and GPU statistics panel.";
 
     // Controls Folder
@@ -1780,6 +1821,15 @@ const msh3js = {
       title: "Preferences",
       expanded: true,
     });
+
+    preferencesFolder.addBinding(msh3js.options, 'showMeshStats', {
+      label: 'Show Mesh Stats'
+    }).on('change', (ev) => {
+      for (const control of msh3js.ui.meshStatsControls) {
+        control.hidden = !ev.value;
+      }
+      if (msh3js.debug) console.log("tweakpane::Show Mesh Stats visibility changed to:", ev.value);
+    }).element.title = "Toggle visibility of vertex and polygon counts of models.";
 
     preferencesFolder.addBinding(msh3js.options, 'showMSHData', {
       label: 'Show MSH Data'
@@ -2010,7 +2060,7 @@ const msh3js = {
     }
 
     // Update stats
-    if (msh3js.options.showStats === true && msh3js.stats != null)
+    if (msh3js.options.showRenderingStats === true && msh3js.stats != null)
       msh3js.stats.update();
 
     // Save rendertime
@@ -3070,7 +3120,7 @@ const msh3js = {
     if (msh3js.debug) console.log("recreateRenderer::Three re-initialized.");
     msh3js.three.renderer.setAnimationLoop(msh3js.render);
     if (msh3js.debug) console.log("recreateRenderer::Animation loop set.");
-    await msh3js.initStats(msh3js.options.showStats);
+    await msh3js.initStats(msh3js.options.showRenderingStats);
     if (msh3js.debug) console.log("recreateRenderer::Stats re-initialized.");
 
     if (msh3js.debug)
