@@ -1,6 +1,6 @@
 [package]
 name = "msh3js_tauri"
-version = "1.0.9"
+version = "1.1.0"
 description = "Three.js model viewer for MSH files (Mesh format for the classic Star Wars Battlefront games)"
 authors = ["Landon Hull aka Calrissian97"]
 license = "GPL-3.0"
@@ -22,6 +22,6 @@ tauri-build = { version = "2.5.1", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.9.2", features = ["devtools"] }
-tauri-plugin-fs = "2.4.4"
-tauri-plugin-dialog = "2.4.2"
+tauri = { version = "2.10.1", features = ["devtools"] }
+tauri-plugin-fs = "2.4.5"
+tauri-plugin-dialog = "2.6.0"
