@@ -856,7 +856,7 @@ const msh3js = {
         let totalVertices = 0;
         let totalTriangles = 0;
         for (const model of modelsInMsh) {
-          if (model.geometry) {
+          if (model.geometry && model.geometry?.attributes?.position?.count && model.geometry?.index?.count) {
             totalVertices += model.geometry.attributes.position.count;
             if (model.geometry.index) {
               totalTriangles += model.geometry.index.count / 3;
@@ -881,9 +881,9 @@ const msh3js = {
           // Calculate individual stats
           let mVertices = 0;
           let mTriangles = 0;
-          if (model.geometry) {
+          if (model.geometry && model.geometry?.attributes?.position?.count) {
             mVertices = model.geometry.attributes.position.count;
-            if (model.geometry.index) {
+            if (model.geometry?.index?.count) {
               mTriangles = model.geometry.index.count / 3;
             } else {
               mTriangles = model.geometry.attributes.position.count / 3;
